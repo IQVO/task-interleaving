@@ -1,0 +1,83 @@
+---
+id: task-interleaving-api
+title: "Task Interleaving API"
+description: "The WES-tier advisor of task interleaving in the warehouse-systems platform"
+sidebar_label: Introduction
+sidebar_position: 0
+hide_title: true
+custom_edit_url: null
+---
+
+import ApiLogo from "@theme/ApiLogo";
+import Heading from "@theme/Heading";
+import SchemaTabs from "@theme/SchemaTabs";
+import TabItem from "@theme/TabItem";
+import Export from "@theme/ApiExplorer/Export";
+
+<span
+  className={"theme-doc-version-badge badge badge--secondary"}
+  children={"Version: 1.0.0"}
+>
+</span>
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Task Interleaving API"}
+>
+</Heading>
+
+
+
+The WES-tier advisor of task interleaving in the warehouse-systems platform
+(ADR 0001, ADR 0002). When a station completes a task, this context looks at
+the open-task pool and, if one or more open tasks are close enough to where the
+operator now stands, issues an **interleaving hint**: a short ranked list of
+candidate tasks. Policy `rectilinear-v1`: the detour of a candidate is the
+rectilinear distance `|dx| + |dy| + verticalWeight*|dz|` in metres, rounded to
+0.1 m, from the station's position to the candidate's first location.
+
+The hint is **advisory**. fulfillment-execution may use it only as a tie-break
+inside one priority band, fails open when it is absent or expired, and keeps
+`claimNext` as its only claim path; nothing in this API assigns work to a
+worker (ADR 0001, ADR 0002).
+
+A site is **inert** until an operator declares its interleaving policy with
+`PUT /sites/{siteId}/policy`: no hint is issued for a site without one. Hints
+are computed from local copies fed by events (open-task pool, claims, location
+geometry; ADR 0003); this API never calls a sibling context. Events are
+published as CloudEvents on `warehouse.task-interleaving.events` through a
+transactional outbox (see `apis/asyncapi.yaml`).
+
+Mutable resources carry a `version` (starts at 1, +1 per accepted change) and a
+matching strong `ETag: "<version>"` header. A policy update sends `If-Match`;
+a stale value is a 412 `version-mismatch`, and a write that loses a race at the
+database is a 409 `concurrent-modification`.
+
+Errors are RFC 7807 problem documents with
+`type = https://errors.task-interleaving.warehouse-systems.dev/<slug>`.
+There is no authentication layer (fleet decision 2026-09-11).
+
+
+<div
+  style={{"display":"flex","flexDirection":"column","marginBottom":"var(--ifm-paragraph-margin-bottom)"}}
+>
+  <h3
+    style={{"marginBottom":"0.25rem"}}
+  >
+    Contact
+  </h3><span>
+    task-interleaving maintainers: 
+  </span><span>
+    URL: [https://github.com/IQVO/task-interleaving](https://github.com/IQVO/task-interleaving)
+  </span>
+</div><div
+  style={{"marginBottom":"var(--ifm-paragraph-margin-bottom)"}}
+>
+  <h3
+    style={{"marginBottom":"0.25rem"}}
+  >
+    License
+  </h3>
+</div>
+      
