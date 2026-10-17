@@ -31,7 +31,7 @@ flowchart LR
     a1["InterleavingPolicy"]:::agg
     e1(["PolicyDeclared (wire: InterleavingPolicyDeclared)"]):::event
 
-    e2(["TaskAvailable (RELOCATE tasks only today)"]):::event
+    e2(["TaskAvailable (RELOCATE, REPLENISH only today)"]):::event
     e3(["TaskCompleted"]):::event
     e4(["TaskClaimed"]):::event
     e5(["LocationGeometryUpdated"]):::event
@@ -51,7 +51,7 @@ flowchart LR
     e8(["HintExpired (wire: InterleavingHintExpired)"]):::event
     h1{{"RESOLVED: the expiry worker calls Expire"}}:::hot
     h2{{"HOTSPOT: no candidate leaves an old hint Active until its TTL"}}:::hot
-    h3{{"HOTSPOT: only RELOCATE tasks are announced, and nobody consumes the hint"}}:::hot
+    h3{{"HOTSPOT: PICK, PACK, SLAM and REBIN tasks are not announced, and nobody consumes the hint"}}:::hot
 
     opr --> c1 --> a1 --> e1
     fl --> e5 --> r1
@@ -81,7 +81,7 @@ ADR 0004.
 1. **Declare.** An operator declares a site policy. Until then the site is inert.
 2. **Feed.** fulfillment-execution and facility-layout events fill the local copies
    (open-task pool, claims, geometry) through the opt-in consumers.
-   fulfillment-execution publishes `TaskAvailable` today only for RELOCATE tasks.
+   fulfillment-execution publishes `TaskAvailable` today only for RELOCATE and REPLENISH tasks.
 3. **Complete.** A `TaskCompleted` records the station's new position, taken from the
    completed task's `to_location` in the pool copy.
 4. **Hint.** The recommender ranks the pool; when it yields at least one candidate,
@@ -95,6 +95,6 @@ ADR 0004.
 | --- | --- | --- |
 | 1 | **Who calls `Expire`?** The `ExpireHints` use case, driven by the `inbound/expiry` worker every `HINT_EXPIRY_INTERVAL` (default 5 s). The aggregate still takes the instant from the caller. | Resolved in code (ADR text still silent) |
 | 2 | **A completion with no candidate leaves an older Active hint in place** until its TTL (bounded staleness; the hint is advisory and fail-open). Retracting it would need an event for the retraction: a later ADR if the floor needs it (ADR 0002). | Accepted by ADR 0002 |
-| 3 | **Announcement scope and the hint consumer.** fulfillment-execution publishes `TaskAvailable` only for RELOCATE tasks, so the pool, and every candidate list, holds RELOCATE tasks only; and nothing in fulfillment-execution consumes `InterleavingHintIssued`, so hints are published and acted on by nobody (ADR 0001). | Open, other contexts |
+| 3 | **Announcement scope and the hint consumer.** fulfillment-execution publishes `TaskAvailable` only for RELOCATE and REPLENISH tasks (its ADR 0049 and ADR 0050), so the pool, and every candidate list, holds those two types only; PICK, PACK, SLAM and REBIN have no location there. And nothing in fulfillment-execution consumes `InterleavingHintIssued` (out of scope in both ADRs), so hints are published and acted on by nobody (ADR 0001). | Open, other contexts |
 | 4 | **Site and geometry code spaces.** v1 assumes the pool's `site_id` equals facility-layout's `siteCode` and one geometry frame per site (ADR 0003, live-data rule). | Open until checked on live data |
 | 5 | **Wording drift in the REST spec.** `apis/openapi.yaml` says a hint is `Superseded` by "a newer completion at the same station" and mentions `supersededAt`; ADR 0002 and the code supersede a hint only when a newer hint is issued (a completion with no candidate supersedes nothing). The code does keep `supersededAt` (`hints.superseded_at`), so only the "newer completion" wording differs. | Reported as a discrepancy |
