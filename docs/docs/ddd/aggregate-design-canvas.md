@@ -10,7 +10,7 @@ sidebar_position: 14
 ddd-crew [Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas)
 for the two aggregates, filled from `internal/domain/stationtrip`,
 `internal/domain/policy` and [ADR 0002](/docs/adr/0002-stationtrip-and-policy-aggregates).
-Both aggregates are on `develop`, persisted by `internal/adapters/outbound/postgres` (and the in-memory adapter).
+Both aggregates are on `develop`, persisted by `internal/adapters/outbound/postgres` (the in-memory adapter is a test double).
 
 ## StationTrip
 

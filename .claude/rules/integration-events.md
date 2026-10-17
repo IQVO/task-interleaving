@@ -127,7 +127,7 @@ to the DLQ.
 
 ## Consumers (`internal/adapters/inbound/kafka`, wired in `cmd/api/consumers.go`)
 
-Two opt-in consumers; the group ids come from the environment, never a string
+Two always-on consumers; the group ids come from the environment, never a string
 literal -- `internal/architecture/fitness_test.go`'s
 TestKafkaConsumerGroupNeverHardcodedInline enforces this (a real incident:
 wes-work-planning's hardcoded group id let a locally-run e2e-tests process
@@ -136,25 +136,26 @@ the shared fleet Kafka broker).
 
 | env | default | meaning |
 | --- | --- | --- |
-| `FULFILLMENT_MODE` | `permissive` | `kafka` starts the fulfillment consumer (`warehouse.fulfillment.events`); `permissive` starts none (the pool is whatever the database holds) |
-| `FULFILLMENT_CONSUMER_GROUP` | none | group id of the fulfillment consumer; required when `FULFILLMENT_MODE=kafka` |
-| `LAYOUT_MODE` | `permissive` | `kafka` starts the layout consumer (`warehouse.facility.events`) |
-| `LAYOUT_CONSUMER_GROUP` | none | group id of the layout consumer; required when `LAYOUT_MODE=kafka` |
-| `KAFKA_BROKERS` | none | comma-separated brokers; required by every consumer in `kafka` mode, and switches the outbox relay on |
+| `FULFILLMENT_MODE` | `kafka` | the only supported value; the fulfillment consumer (`warehouse.fulfillment.events`) always runs. `permissive` is rejected at boot ([ADR 0006](../../docs/adr/0006-postgres-and-kafka-are-the-only-runtime.md)) |
+| `FULFILLMENT_CONSUMER_GROUP` | none | group id of the fulfillment consumer; mandatory |
+| `LAYOUT_MODE` | `kafka` | as above, for the layout consumer (`warehouse.facility.events`) |
+| `LAYOUT_CONSUMER_GROUP` | none | group id of the layout consumer; mandatory |
+| `KAFKA_BROKERS` | none | comma-separated brokers; mandatory (consumers, outbox relay and the `/readyz` Kafka check) |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | outbox relay attempts per row (`0` = unlimited) |
 
-A mode is `kafka` or `permissive`. An unknown mode, `kafka` without its group
-variable, or `kafka` without `KAFKA_BROKERS` is a boot error, reported before
-the database is dialled. Both consumers are stable process-and-commit consumers
+A missing mandatory variable, `permissive` or an unknown mode is a boot error
+that names the variable, reported before the database is dialled and before the
+listener binds. Both consumers are stable process-and-commit consumers
 (no full replay into memory), so a stable group id is correct; a new group
 starts at the first offset, so a fresh deployment replays each topic and the
 copies converge. If a consumer ever replays from FirstOffset on every start to
 build an in-memory read model, its group id must additionally be UNIQUE PER
 PROCESS INSTANCE (hostname+PID+timestamp).
 
-In-memory mode (no `DATABASE_URL`) can run the consumers, but its copies are
-lost on restart while the committed offsets are not: it logs a WARN and is for
-development only.
+The service never creates topics: infrastructure owns them, and a missing one
+keeps `/readyz` at 503 while the consumers retry (a failed reader is run again
+after 1 s). There is no in-memory runtime: `cmd/**` must not import
+`internal/adapters/outbound/memory` (`TestRuntimeBinaryHasNoInMemoryAdapters`).
 
 Failure handling: each message is fetched, handled in ONE transaction together
 with its `processed_events` claim, and only then committed (`FetchMessage` +

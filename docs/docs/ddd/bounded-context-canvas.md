@@ -111,9 +111,9 @@ may use as a tie-break inside one priority band.
 
 | Collaborator | Message | Kind | Channel | Status |
 | --- | --- | --- | --- | --- |
-| fulfillment-execution | `TaskCompleted` | event | `warehouse.fulfillment.events` | producer verified; consumer built (`FULFILLMENT_MODE=kafka`) |
+| fulfillment-execution | `TaskCompleted` | event | `warehouse.fulfillment.events` | producer verified; consumer built (always on) |
 | fulfillment-execution | `TaskAvailable` (RELOCATE and REPLENISH tasks only), `TaskClaimed` (every task type) | events | `warehouse.fulfillment.events` | producer verified (its ADR 0049 and ADR 0050); consumer built |
-| facility-layout | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` | events | `warehouse.facility.events` | producer verified; consumer built (`LAYOUT_MODE=kafka`) |
+| facility-layout | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` | events | `warehouse.facility.events` | producer verified; consumer built (always on) |
 | operator (console, agent) | Declare policy | command | `PUT /sites/{siteId}/policy` | built |
 | operator (console, agent) | Get policy, list hints, get hint, get station, simulate | queries | `GET /sites/{siteId}/policy`, `GET /hints`, `GET /hints/{hintId}`, `GET /stations/{stationId}`, `POST /recommendations` | built |
 

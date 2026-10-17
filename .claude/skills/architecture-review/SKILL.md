@@ -35,8 +35,8 @@ check a design decision against this fleet's standing architecture.
    Consumed types must match the producers' `apis/asyncapi.yaml` byte-for-byte
    and stay in the ADR 0003 and ADR 0004 tables; `TaskAvailable` and
    `TaskClaimed` are published by fulfillment-execution (`TaskAvailable` for RELOCATE and REPLENISH tasks only); verify against its `apis/asyncapi.yaml` on `origin/develop` before relying on any other task type.
-   Copies converge from events only, with the `*_MODE` switches defaulting to
-   `permissive`.
+   Copies converge from events only; the consumers are always on (the `*_MODE`
+   variables only accept `kafka`, ADR 0006).
 4. **MCP additive-boundary rule (fleet-wide).** A change in an MCP inbound
    adapter must depend only on application/domain, and nothing else may depend
    on it. `TestMCPAdapterDependencyRule` in `internal/architecture` encodes it;

@@ -15,8 +15,7 @@ Contract: `apis/asyncapi.yaml`; catalogue: [ADR 0004](/docs/adr/0004-cloudevents
 :::info Built end to end
 The domain events below are raised in code (`internal/domain/stationtrip/events.go`),
 turned into CloudEvents outbox rows by `internal/adapters/outbound/events` inside the
-use case's transaction, and published by the outbox relay when `DATABASE_URL` and
-`KAFKA_BROKERS` are set. The consumed events are handled by the opt-in consumers in
+use case's transaction, and published by the always-on outbox relay. The consumed events are handled by the always-on consumers in
 `internal/adapters/inbound/kafka`. See [Integration](/docs/ecosystem/integration) for
 which sibling edges have a counterpart on the other side.
 :::

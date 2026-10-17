@@ -47,11 +47,11 @@ for real responses.
 - **Paging.** `GET /hints` takes `limit` (1 to 500, default 100) and the opaque
   `cursor` (the previous page's `nextCursor`). No `nextCursor` marks the last page.
 - **`Idempotency-Key`.** Documented on `POST /recommendations` and implemented by
-  `internal/adapters/inbound/http/idempotency.go`. It is required whenever the
-  service runs on Postgres (`400 idempotency-key-required` when absent or longer
+  `internal/adapters/inbound/http/idempotency.go`. It is required on every
+  deployment, since Postgres is the only runtime (`400
+  idempotency-key-required` when absent or longer
   than 128 characters); the same key with a different method, path or body is
-  `422 idempotency-key-reused`; an equal request replays the stored answer. The
-  in-memory development mode does not enforce it.
+  `422 idempotency-key-reused`; an equal request replays the stored answer.
 - **Errors** are RFC 7807 `application/problem+json` with
   `type = https://errors.task-interleaving.warehouse-systems.dev/<slug>`. The slugs
   in the spec: `malformed-request`, `invalid-site-id`, `invalid-station-id`,

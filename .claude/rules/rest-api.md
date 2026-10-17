@@ -55,10 +55,9 @@ API assigns work to a worker.
 - `400` `malformed-request` also covers a `fromLocation` that is present but empty,
   blank or longer than 128 characters (the request schema's bounds); a blank or
   invalid `stationId` is `invalid-station-id`.
-- `Idempotency-Key` (UUID per logical submit) is required on every POST whenever
-  the service runs with Postgres; a replay with the same key and body returns the
-  original response. It is not marked `required` in the spec only because the
-  in-memory development mode does not enforce it.
+- `Idempotency-Key` (UUID per logical submit) is required on every POST in every
+  deployment (Postgres is the only runtime); a replay with the same key and body
+  returns the original response. The spec marks the header `required: true`.
 - JSON is camelCase on REST (`maxDetourM`, `hintTtlSeconds`); the same fields are
   snake_case in CloudEvents `data`.
 - Auth: none. The fleet-wide REST+MCP auth was deliberately reverted on

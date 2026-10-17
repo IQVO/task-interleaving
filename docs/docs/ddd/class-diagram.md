@@ -297,8 +297,9 @@ assertions that each adapter implements the ports), `cmd/api/adapters.go` and
 `cmd/api/relay.go` (the wiring), `internal/adapters/kafka/cloudevents/cloudevents.go`,
 `internal/adapters/outbound/kafka/{writer,relay_sink}.go`,
 `internal/architecture/architecture_test.go` (the layer rules). `Clock` and
-`IDGenerator` are the remaining ports; the in-memory adapter implements `Clock`
-(`SystemClock`) and `IDGenerator` (`RandomIDs`) and is used in both storage modes.
+`IDGenerator` are the remaining ports; the system adapter
+(`internal/adapters/outbound/system`) implements `Clock` (`Clock`) and
+`IDGenerator` (`RandomIDs`) for the shipped binary.
 The `eventsSink` writes through the `Inserter` interface that
 `postgres.OutboxRepo` satisfies; adapters never import each other, `cmd/api` does
 the wiring.

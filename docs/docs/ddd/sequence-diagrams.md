@@ -251,4 +251,4 @@ Source: `internal/application/usecases/recommend.go`,
 `internal/adapters/inbound/http/recommend_handler.go`, `idempotency.go`,
 `recommend.Recommend`, `apis/openapi.yaml` (`recommendTasks`). A 4xx answer is
 rolled back and stored on its own so the same key replays the same rejection; a 5xx
-is never stored. In-memory mode skips the middleware.
+is never stored.

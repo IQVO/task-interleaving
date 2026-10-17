@@ -159,14 +159,14 @@ dispatch on a short name or suffix match. Add a test that a legacy flat-envelope
 message is rejected. Never dead-letter on a cancelled context (a DLQ call is
 `//dlq:deterministic` only for a poison payload; `TestDeadLetterCallsGuardCancellation`).
 
-### 3. The consumer-group pattern and the mode switch
+### 3. The consumer-group pattern and the mode variables
 
 Both consumers here (fulfillment, layout) are **stable process-and-commit
 consumers** over durable Postgres copies — Pattern A below. The group id comes
 from the environment, never a literal: `FULFILLMENT_CONSUMER_GROUP` and
-`LAYOUT_CONSUMER_GROUP`, next to the modes `FULFILLMENT_MODE` and `LAYOUT_MODE`
-(`kafka` or `permissive`, default `permissive`; `kafka` with its group
-variable unset is a boot error). See ADR 0003.
+`LAYOUT_CONSUMER_GROUP` (both mandatory: unset is a boot error). The modes
+`FULFILLMENT_MODE` and `LAYOUT_MODE` default to `kafka`, the only supported
+value (`permissive` is rejected). See ADR 0003 and ADR 0006.
 
 **Pattern A — long-lived, single-instance consumer group.** One instance at a
 time; the group id is stable across restarts, which is correct because
