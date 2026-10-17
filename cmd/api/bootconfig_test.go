@@ -123,19 +123,19 @@ func TestRunRefusesABadExpiryIntervalBeforeDialing(t *testing.T) {
 	}
 }
 
-func TestRuntimeTopicsListEveryConsumedAndProducedTopic(t *testing.T) {
-	got := strings.Join(runtimeTopics(), ",")
+func TestConsumedAndProducedTopicsAreTheContractTopics(t *testing.T) {
+	got := strings.Join(append(consumedTopics(), producedTopics()...), ",")
 	want := "warehouse.fulfillment.events,warehouse.facility.events," +
 		"warehouse.task-interleaving.events,warehouse.task-interleaving.analytics"
 	if got != want {
-		t.Fatalf("runtime topics = %s, want %s", got, want)
+		t.Fatalf("topics = %s, want %s", got, want)
 	}
 }
 
 func TestLogTopicsNamesWhatTheServiceConsumesAndProduces(t *testing.T) {
 	logger, logs := quietLogger()
 	logTopics(logger, []string{"b:9092"})
-	for _, want := range []string{"warehouse.fulfillment.events", "warehouse.task-interleaving.events", "never creates"} {
+	for _, want := range []string{"warehouse.fulfillment.events", "warehouse.task-interleaving.events", "never creates", "informational"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("topics log lacks %q: %s", want, logs.String())
 		}

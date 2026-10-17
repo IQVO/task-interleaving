@@ -57,7 +57,8 @@ type Consumer struct {
 func newConsumer(name string, brokers []string, topic, groupID string, handlers map[string]HandlerFunc, logger *slog.Logger) *Consumer {
 	cfg := readerConfig(brokers, topic, groupID)
 	// kafka-go retries a failing group join, a topic that does not exist yet
-	// (infrastructure owns the topics; the service never creates them) or an
+	// (the broker auto-creates topics on first write; a consumed topic exists
+	// once its producer ran, the service never creates it) or an
 	// unreachable broker silently unless it is given an ErrorLogger: surface
 	// every such failure as an ERROR log line, so the retry is visible.
 	cfg.ErrorLogger = readerErrorLogger(defaultLogger(logger), name, topic)

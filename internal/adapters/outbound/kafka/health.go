@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
 
 	kafkago "github.com/segmentio/kafka-go"
 )
@@ -16,81 +14,43 @@ type MetadataClient interface {
 	Metadata(ctx context.Context, req *kafkago.MetadataRequest) (*kafkago.MetadataResponse, error)
 }
 
-// BrokerCheck reports whether Kafka is usable by this service: a broker
-// answers a metadata request AND every topic the service consumes or
-// produces exists with a leader. The service never creates topics (infra owns
-// them), so a missing topic is a not-ready state, not something to heal.
+// BrokerCheck reports whether Kafka is reachable: a broker answers a metadata
+// request. That is all it checks. It deliberately does NOT look at topics: on
+// the cluster the broker auto-creates every business topic on first write (the
+// fleet convention, warehouse-infra terraform/kafka.tf), so the service's own
+// output topics do not exist until it first publishes, and a not-ready pod
+// receives no traffic and so could never be driven to publish. A missing
+// consumed topic is not a readiness failure either: the consumers retry and
+// log it.
 //
-// The request asks for the named topics only; kafka-go's Client.Metadata does
-// not set AllowAutoTopicCreation, so asking never creates a topic.
+// The request names NO topics (an empty, non-nil list: zero topics, not the
+// null list that means "all topics"), so the answer is small and asking never
+// creates a topic (kafka-go's Client.Metadata does not set
+// AllowAutoTopicCreation).
 type BrokerCheck struct {
 	client MetadataClient
-	topics []string
 }
 
-// NewBrokerCheck builds the check over brokers for the given topics. It does
-// not dial.
-func NewBrokerCheck(brokers, topics []string) *BrokerCheck {
-	return NewBrokerCheckWithClient(&kafkago.Client{Addr: kafkago.TCP(brokers...)}, topics)
+// NewBrokerCheck builds the check over brokers. It does not dial.
+func NewBrokerCheck(brokers []string) *BrokerCheck {
+	return NewBrokerCheckWithClient(&kafkago.Client{Addr: kafkago.TCP(brokers...)})
 }
 
 // NewBrokerCheckWithClient builds the check over an explicit client (a fake in
 // tests).
-func NewBrokerCheckWithClient(c MetadataClient, topics []string) *BrokerCheck {
-	return &BrokerCheck{client: c, topics: topics}
+func NewBrokerCheckWithClient(c MetadataClient) *BrokerCheck {
+	return &BrokerCheck{client: c}
 }
 
-// Check returns nil when a broker answered and every topic has a leader on
-// every partition; otherwise an error naming what is missing. ctx bounds the
-// round trip.
+// Check returns nil when a broker answered a topic-less metadata request;
+// otherwise an error. ctx bounds the round trip.
 func (b *BrokerCheck) Check(ctx context.Context) error {
-	resp, err := b.client.Metadata(ctx, &kafkago.MetadataRequest{Topics: b.topics})
+	resp, err := b.client.Metadata(ctx, &kafkago.MetadataRequest{Topics: []string{}})
 	if err != nil {
 		return fmt.Errorf("kafka metadata: %w", err)
 	}
-	if problems := topicProblems(resp, b.topics); len(problems) > 0 {
-		return errors.New("kafka topics not ready: " + strings.Join(problems, "; "))
+	if resp == nil || len(resp.Brokers) == 0 {
+		return errors.New("kafka metadata: the broker answered without listing any broker")
 	}
 	return nil
-}
-
-// topicProblems lists, sorted, what is wrong with each wanted topic in resp.
-func topicProblems(resp *kafkago.MetadataResponse, wanted []string) []string {
-	byName := make(map[string]kafkago.Topic, len(resp.Topics))
-	for _, t := range resp.Topics {
-		byName[t.Name] = t
-	}
-	var problems []string
-	for _, name := range wanted {
-		t, ok := byName[name]
-		if !ok {
-			problems = append(problems, name+": not in the broker's answer")
-			continue
-		}
-		if t.Error != nil {
-			problems = append(problems, name+": "+t.Error.Error())
-			continue
-		}
-		if p := partitionProblem(t); p != "" {
-			problems = append(problems, name+": "+p)
-		}
-	}
-	sort.Strings(problems)
-	return problems
-}
-
-// partitionProblem is "" when the topic has partitions and each has a leader.
-func partitionProblem(t kafkago.Topic) string {
-	if len(t.Partitions) == 0 {
-		return "no partitions"
-	}
-	for _, p := range t.Partitions {
-		if p.Error != nil {
-			return fmt.Sprintf("partition %d: %v", p.ID, p.Error)
-		}
-		if p.Leader.ID < 0 {
-			return fmt.Sprintf("partition %d has no leader", p.ID)
-		}
-	}
-	return ""
 }

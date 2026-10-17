@@ -11,7 +11,7 @@ import (
 )
 
 // Dependency is one thing /readyz needs to be true: a name for the response
-// and the check itself (Postgres ping, Kafka broker and topic metadata).
+// and the check itself (Postgres ping, Kafka broker metadata).
 type Dependency struct {
 	Name  string
 	Check func(ctx context.Context) error

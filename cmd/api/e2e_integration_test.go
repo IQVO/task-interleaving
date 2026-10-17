@@ -24,8 +24,10 @@ import (
 // the REAL entry point (run, in-process) against testcontainers Postgres and
 // Kafka with nothing but the environment a deployment sets, and drives it only
 // through Kafka (the consumed topics) and REST. It reads the effects from
-// Postgres and from the produced topics. The broker has topic auto-creation
-// OFF, like the infrastructure that owns the topics.
+// Postgres and from the produced topics. The test broker has topic
+// auto-creation OFF so the test controls when each topic appears; the cluster
+// broker auto-creates topics on first write (the fleet convention) and
+// readiness does not depend on them.
 
 // Topic names of the world the service lives in (ADR 0003, ADR 0004).
 const (
@@ -345,26 +347,30 @@ func (s *service) hints(state string) []hintView {
 	return page.Items
 }
 
-// Phase 1: the infrastructure is not there yet. The service boots anyway, is
-// alive, reports NOT ready (naming kafka, never the cause) and does not create
-// a single topic; once infrastructure creates the topics it becomes ready.
+// Phase 1: the topics do not exist yet (a fresh cluster before anything
+// published). Readiness needs Postgres plus a broker answering metadata, NOT
+// topics, so the service is ready at once; and it creates no topic itself (the
+// broker here has auto-creation OFF and the service never calls an admin API).
+// The test then creates the topics explicitly, as the cluster broker would on
+// first write, and the end-to-end flow runs unchanged.
 func phaseTopicsMissing(t *testing.T, s *service) {
 	t.Helper()
-	status, body := s.readyz()
-	if status != http.StatusServiceUnavailable || !strings.Contains(body, "/dependency-unavailable") || !strings.Contains(body, "not ready: kafka") ||
-		strings.Contains(body, "postgres") {
-		t.Fatalf("readyz without topics = %d %s, want 503 dependency-unavailable naming kafka only", status, body)
-	}
-	for _, topic := range allTopics {
-		if kafkatest.TopicExists(t, topic) {
-			t.Fatalf("topic %s exists: the service must never create topics", topic)
-		}
-	}
-	createTopics(t)
-	waitFor(t, 60*time.Second, "/readyz to turn 200 once the topics exist", func() bool {
+	waitFor(t, 60*time.Second, "/readyz to be 200 although no topic exists", func() bool {
 		status, _ := s.readyz()
 		return status == http.StatusOK
 	})
+	for _, topic := range allTopics {
+		if kafkatest.TopicExists(t, topic) {
+			t.Fatalf("topic %s exists: the service must never create topics through an admin API", topic)
+		}
+	}
+	if status, body := s.readyz(); status != http.StatusOK || !strings.Contains(body, "ready") {
+		t.Fatalf("readyz with every topic missing = %d %s, want 200 ready", status, body)
+	}
+	createTopics(t)
+	if status, body := s.readyz(); status != http.StatusOK {
+		t.Fatalf("readyz after the topics appeared = %d %s, want 200", status, body)
+	}
 }
 
 const policyBody = `{"maxDetourM":25,"maxCandidates":3,"hintTtlSeconds":3600,"eligibleTaskTypes":["PICK"],"verticalWeight":1}`
