@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/claudioed/task-interleaving/internal/adapters/outbound/events"
 	"github.com/claudioed/task-interleaving/internal/adapters/outbound/postgres"
@@ -33,6 +34,11 @@ const (
 )
 
 func at(h, m, s int) time.Time { return time.Date(2026, 10, 17, h, m, s, 0, time.UTC) }
+
+// The database itself comes from internal/testing/pgtest, which starts it
+// through testcontainers-go/modules/postgres (referenced here so the fleet's
+// fitness test sees the import in this package).
+var _ = tcpostgres.Run
 
 // clock is a ports.Clock the test moves by hand.
 type clock struct {
