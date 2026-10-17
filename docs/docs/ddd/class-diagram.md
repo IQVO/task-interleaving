@@ -167,43 +167,138 @@ classDiagram
         +Distance(Place, Place) float64, bool
     }
     class Rectilinear
+    class PolicyRepo {
+        <<port>>
+        +Get(site) PolicyRecord
+        +Save(rec, loadedVersion)
+    }
+    class StationTripRepo {
+        <<port>>
+        +Get(id) StationTrip
+        +Save(trip, loadedVersion)
+        +ExpiredActive(now, limit) StationID[]
+        +GetHint(id) HintRecord
+        +ListHints(filter, after, limit) HintRecord[]
+    }
+    class TaskPool {
+        <<port>>
+        +Get(id) Task
+        +Save(task)
+        +Available(siteID) Task[]
+    }
+    class LocationBook {
+        <<port>>
+        +Places(codes) Place map
+        +SaveZone(zone)
+        +SaveLocation(code, zoneID)
+        +DecommissionLocation(code)
+        +SaveGeometry(code, x, y, z)
+    }
+    class EventSink {
+        <<port>>
+        +PublishTripEvents(events)
+        +PublishPolicyDeclared(declaration)
+    }
+    class ProcessedEvents {
+        <<port>>
+        +Claim(consumer, eventID) bool
+    }
+    class IdempotencyStore {
+        <<port>>
+        +Lookup(key) IdempotencyRecord
+        +Save(record)
+    }
+    class UnitOfWork {
+        <<port>>
+        +Do(ctx, fn) error
+    }
+    class usecases {
+        <<package application/usecases>>
+        DeclarePolicy GetPolicy ListHints GetHint GetStation Recommend
+        ApplyTaskAvailable ApplyTaskClaimed ApplyTaskCompleted
+        ApplyZone ApplyLocationRegistered ApplyLocationDecommissioned ApplyGeometryUpdated
+        ExpireHints
+    }
+    class httpAdapter {
+        <<package inbound/http>>
+        chi router, Idempotency middleware
+    }
+    class kafkaConsumers {
+        <<package inbound/kafka>>
+        fulfillment consumer, layout consumer
+    }
+    class expiryWorker {
+        <<package inbound/expiry>>
+    }
+    class postgresAdapter {
+        <<package outbound/postgres>>
+    }
+    class memoryAdapter {
+        <<package outbound/memory>>
+    }
+    class eventsSink {
+        <<package outbound/events>>
+    }
+    class outboxRelay {
+        <<package outbound/outbox>>
+    }
+    class kafkaWriter {
+        <<package outbound/kafka>>
+        +NewWriter(brokers) Writer
+        RelaySink
+    }
     class cloudevents {
-        <<package>>
+        <<package kafka/cloudevents>>
         +New(Spec) bytes
         +Decode(bytes) Event
         +ContentTypeHeader() Header
         +Type(entity, eventName) string
         +DataSchema(stream, eventName, version) string
     }
-    class kafkaWriter {
-        <<package outbound/kafka>>
-        +NewWriter(brokers) Writer
-    }
-    class applicationPorts {
-        <<pending: internal/application/ports>>
-    }
-    class httpAdapter {
-        <<pending: inbound/http>>
-    }
-    class kafkaConsumers {
-        <<pending: inbound/kafka>>
-    }
-    class postgresAdapter {
-        <<pending: outbound/postgres>>
-    }
-    class outboxRelay {
-        <<pending>>
-    }
     Rectilinear ..|> Model
-    outboxRelay ..> kafkaWriter : writes with
-    outboxRelay ..> cloudevents : encodes with
+    httpAdapter ..> usecases : calls
+    kafkaConsumers ..> usecases : calls
+    expiryWorker ..> usecases : calls ExpireHints
     kafkaConsumers ..> cloudevents : decodes with
-    httpAdapter ..> applicationPorts : calls use cases
-    postgresAdapter ..|> applicationPorts : implements OUT ports
+    usecases ..> PolicyRepo
+    usecases ..> StationTripRepo
+    usecases ..> TaskPool
+    usecases ..> LocationBook
+    usecases ..> EventSink
+    usecases ..> ProcessedEvents
+    usecases ..> UnitOfWork
+    postgresAdapter ..|> PolicyRepo
+    postgresAdapter ..|> StationTripRepo
+    postgresAdapter ..|> TaskPool
+    postgresAdapter ..|> LocationBook
+    postgresAdapter ..|> ProcessedEvents
+    postgresAdapter ..|> IdempotencyStore
+    postgresAdapter ..|> UnitOfWork
+    memoryAdapter ..|> PolicyRepo
+    memoryAdapter ..|> StationTripRepo
+    memoryAdapter ..|> TaskPool
+    memoryAdapter ..|> LocationBook
+    memoryAdapter ..|> ProcessedEvents
+    memoryAdapter ..|> IdempotencyStore
+    memoryAdapter ..|> UnitOfWork
+    memoryAdapter ..|> EventSink
+    eventsSink ..|> EventSink
+    eventsSink ..> cloudevents : encodes with
+    eventsSink ..> postgresAdapter : inserts outbox rows via cmd wiring
+    outboxRelay ..> postgresAdapter : drains the outbox
+    outboxRelay ..> kafkaWriter : sends with RelaySink
+    httpAdapter ..> IdempotencyStore : middleware, wired by cmd
 ```
 
-Source: `internal/domain/travel/travel.go` (the only port declared in the domain),
-`internal/adapters/kafka/cloudevents/cloudevents.go`,
-`internal/adapters/outbound/kafka/writer.go`, `internal/architecture/architecture_test.go`
-(the layer rules). Boxes tagged *pending* have no code on `develop`; their
-relationships are the layout fixed by ADR 0001 and ADR 0004, not observed imports.
+Source: `internal/application/ports/ports.go`, `clock.go`, `unit_of_work.go` (the
+OUT ports), `internal/domain/travel/travel.go` (the port declared in the domain),
+`internal/adapters/outbound/{postgres,memory}/ports_check.go` (compile-time
+assertions that each adapter implements the ports), `cmd/api/adapters.go` and
+`cmd/api/relay.go` (the wiring), `internal/adapters/kafka/cloudevents/cloudevents.go`,
+`internal/adapters/outbound/kafka/{writer,relay_sink}.go`,
+`internal/architecture/architecture_test.go` (the layer rules). `Clock` and
+`IDGenerator` are the remaining ports; the in-memory adapter implements `Clock`
+(`SystemClock`) and `IDGenerator` (`RandomIDs`) and is used in both storage modes.
+The `eventsSink` writes through the `Inserter` interface that
+`postgres.OutboxRepo` satisfies; adapters never import each other, `cmd/api` does
+the wiring.

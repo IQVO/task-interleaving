@@ -8,8 +8,8 @@ sidebar_position: 20
 # Ubiquitous language
 
 Every term of the context with the code identifier that implements it. Use these
-exact names in code, tests, ADRs and conversation. Terms marked *(designed)* have no
-code on `develop` yet.
+exact names in code, tests, ADRs and conversation. Terms marked *(contract)* are
+fixed by `apis/` or an ADR rather than by a Go identifier.
 
 | Term | Meaning | Code or contract |
 | --- | --- | --- |
@@ -22,11 +22,11 @@ code on `develop` yet.
 | **Candidate** | One ranked entry of a hint: `Rank` from 1, `TaskID`, `TaskType`, `Location`, `DetourM`. | `recommend.Candidate` |
 | **Detour** | Distance in metres from the station's origin to the candidate's first location (`FromLocation`), rounded to 0.1 m. `ToLocation` never enters the ranking. | `Candidate.DetourM`, `travel.Round` |
 | **Origin** | Where the station stands now; the point distances are measured from. Without known geometry no hint can be computed. | `recommend.Input.Origin`, `ErrOriginUnknown` |
-| **Open-task pool** | The event-fed local copy of the tasks still open, with where each starts and ends. An input of the recommender, not aggregate state. | `[]recommend.OpenTask`; copy tables *(designed)* |
+| **Open-task pool** | The event-fed local copy of the tasks still open, with where each starts and ends. An input of the recommender, not aggregate state. | `[]recommend.OpenTask`, `ports.TaskPool`, table `task_pool` |
 | **Priority band** | An opaque string equal across tasks that fulfillment-execution orders as peers. Carried, never interpreted here. | `TaskAvailable.priority_band` *(contract)* |
-| **Tie-break** | How fulfillment-execution may use a hint: only inside one priority band, fail-open. | ADR 0001 *(consumer change P3 pending)* |
+| **Tie-break** | How fulfillment-execution may use a hint: only inside one priority band, fail-open. | ADR 0001 *(fulfillment-execution does not consume the hint yet)* |
 | **InterleavingPolicy** | The per-site settings, versioned, one per site. | `policy.Policy` |
-| **Inert (site)** | A site that never declared a policy: no hint is issued for it. | ADR 0002; `404 policy-not-found` *(contract)* |
+| **Inert (site)** | A site that never declared a policy: no hint is issued for it. | ADR 0002; `repository.ErrPolicyNotFound`, `404 policy-not-found` |
 | **Settings** | The values an operator declares: max detour, max candidates, hint TTL, eligible task types, vertical weight. | `policy.Settings` |
 | **Max detour** | Largest detour in metres a candidate may have; a detour equal to the limit qualifies. | `Settings.MaxDetourM` |
 | **Max candidates** | How many candidates a hint lists at most, 1 to 5. | `Settings.MaxCandidates` |
@@ -44,11 +44,17 @@ code on `develop` yet.
 | **Consume (a hint)** | The hinted station claims one of its candidates while it is unexpired. | `StationTrip.RecordClaim`, event `HintConsumed` |
 | **Expire (a hint)** | An Active hint reaches `expires_at`. | `StationTrip.Expire`, event `HintExpired` |
 | **Supersede (a hint)** | A newer hint replaces the Active one. Raises no event of its own. | `StationTrip.IssueHint`, `HintIssued.SupersededHintID` |
-| **Simulation** | A read-only run of the recommender, optionally from a what-if `fromLocation`; issues nothing. | `POST /recommendations` *(contract)* |
+| **Simulation** | A read-only run of the recommender, optionally from a what-if `fromLocation`; issues nothing. | `usecases.Recommend`, `POST /recommendations` |
 | **Fail-open** | An absent, expired or unknown hint means fulfillment-execution just proceeds with `claimNext`. | ADR 0001 |
 | **Domain event** | A fact raised by the aggregate, not a wire message. | `stationtrip.Event`, `HintIssued`, `HintConsumed`, `HintExpired` |
-| **Outbox** | The transactional table the events are written to with the aggregate; a relay drains it to Kafka. | ADR 0004 *(designed)* |
-| **Local copy** | A durable table fed by a consumer (pool, claims, geometry), rebuilt by replaying its topic. | ADR 0003 *(designed)* |
+| **Outbox** | The transactional table the events are written to with the aggregate; a relay drains it to Kafka. | table `outbox_events`, `outboxrelay.Relay`, `events.Sink`, ADR 0004 |
+| **Local copy** | A durable table fed by a consumer (pool, claims, geometry), rebuilt by replaying its topic. | tables `task_pool`, `zones`, `locations`; `ports.TaskPool`, `ports.LocationBook`, ADR 0003 |
+| **Processed event** | The claim of a consumed CloudEvents `id` by one consumer, committed in the same transaction as the effect; a repeat is a duplicate. | `ports.ProcessedEvents`, table `processed_events`, `usecases.Intake` |
+| **Outcome** | What a consumer use case did with a message: `applied`, `duplicate`, `stale`, `ignored`. | `usecases.Outcome` |
+| **Dead-letter topic** | `<topic>.dlq`, where a message goes after 5 failed attempts or at once when its payload can never be applied. | `kafka.DLQSuffix`, headers `x-dlq-*` |
+| **Idempotency-Key** | The request header that makes `POST /recommendations` replayable in Postgres mode; first writer wins. | `http.Idempotency`, table `idempotency_keys` |
+| **Attempt cap** | Failures after which the relay stops claiming an outbox row (`OUTBOX_MAX_ATTEMPTS`, default 20). | `outboxrelay.WithMaxAttempts` |
+| **Hint-expiry worker** | The timer-driven adapter that expires due hints every `HINT_EXPIRY_INTERVAL`. | `expiry.Worker`, `usecases.ExpireHints` |
 
 ## Words not to use
 

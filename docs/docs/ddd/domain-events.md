@@ -12,11 +12,13 @@ CloudEvents `type`, topic, key, payload, producer and consumers. Payloads are
 `snake_case`, optional fields are omitted when unset, timestamps are RFC 3339 UTC.
 Contract: `apis/asyncapi.yaml`; catalogue: [ADR 0004](/docs/adr/0004-cloudevents-envelope-and-type-catalogue).
 
-:::caution Contract only
-The domain events below are raised in code (`internal/domain/stationtrip/events.go`)
-and the envelope helper exists (`internal/adapters/kafka/cloudevents`). Nothing
-publishes or consumes them yet: the use cases, the outbox and the Kafka adapters are
-not on `develop`.
+:::info Built end to end
+The domain events below are raised in code (`internal/domain/stationtrip/events.go`),
+turned into CloudEvents outbox rows by `internal/adapters/outbound/events` inside the
+use case's transaction, and published by the outbox relay when `DATABASE_URL` and
+`KAFKA_BROKERS` are set. The consumed events are handled by the opt-in consumers in
+`internal/adapters/inbound/kafka`. See [Integration](/docs/ecosystem/integration) for
+which sibling edges have a counterpart on the other side.
 :::
 
 ## Raised by the domain
@@ -26,10 +28,12 @@ not on `develop`.
 | `stationtrip.HintIssued` | `StationTrip.IssueHint` | `Header{Station, Site, Version, At}`, `HintID`, `AfterTask`, `Origin`, `ExpiresAt`, `PolicyVersion`, `Candidates`, `SupersededHintID` | `InterleavingHintIssued` |
 | `stationtrip.HintConsumed` | `StationTrip.RecordClaim` | `Header`, `HintID`, `TaskID`, `Rank`, `DetourM` | `InterleavingHintConsumed` |
 | `stationtrip.HintExpired` | `StationTrip.Expire` | `Header`, `HintID`, `ExpiresAt` | `InterleavingHintExpired` |
-| none (package `policy` raises no event) | the application layer when a policy is declared | | `InterleavingPolicyDeclared` |
+| none (package `policy` raises no event) | the `DeclarePolicy` use case, through `EventSink.PublishPolicyDeclared` | site, settings, version, declared-at | `InterleavingPolicyDeclared` |
 
 `HintIssued` also names the hint it superseded, so persistence can close that row.
-A superseded hint has no event of its own.
+A superseded hint has no event of its own. The domain names are `HintIssued`,
+`HintConsumed` and `HintExpired`; the published names carry the `Interleaving` prefix
+(`internal/adapters/outbound/events/encoder.go`).
 
 ## Published
 
@@ -41,10 +45,10 @@ Kafka key as below, Kafka header `content-type: application/cloudevents+json; ch
 
 | Full `type` | Topic(s) | `subject` and key | Consumers |
 | --- | --- | --- | --- |
-| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | `warehouse.task-interleaving.events`, `warehouse.task-interleaving.analytics` | station id | fulfillment-execution (consumer change P3, pending) |
-| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintConsumed` | `warehouse.task-interleaving.analytics` | station id | the service's own analytics side (later phase) |
-| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintExpired` | `warehouse.task-interleaving.analytics` | station id | same |
-| `com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared` | `warehouse.task-interleaving.analytics` | site id | same |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | `warehouse.task-interleaving.events`, `warehouse.task-interleaving.analytics` | station id | none built: fulfillment-execution's `origin/develop` has no consumer (its ADR 0049 lists consuming it as out of scope) |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintConsumed` | `warehouse.task-interleaving.analytics` | station id | none built (ADR 0004: "a later phase") |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintExpired` | `warehouse.task-interleaving.analytics` | station id | none built |
+| `com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared` | `warehouse.task-interleaving.analytics` | site id | none built |
 
 ### Payloads
 
@@ -78,20 +82,24 @@ The integration and analytics rows of one occurrence share `type` and `id`; only
 
 | Full `type` | Topic | Key | Fields used | Producer status |
 | --- | --- | --- | --- | --- |
-| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | task id | `task_id, task_type, site_id, from_location, to_location, required_capabilities[], cpt?, priority_band, available_at` | pending producer change P2 |
-| `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | task id | `task_id, task_type, station_id, claimed_at` | pending producer change P2 (analytics-only today, without `claimed_at`) |
+| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | task id | `task_id, task_type, site_id, from_location, to_location, required_capabilities[], priority_band` (`cpt` and `available_at` are ignored) | published since fulfillment-execution's ADR 0049, **RELOCATE tasks only** |
+| `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | task id | `task_id, task_type, station_id, claimed_at` | published on the integration topic for every task type, with `claimed_at` (the analytics-topic row is separate) |
 | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | task id | `task_id, station_id` (the producer requires `task_id, station_id, work_unit_id`) | verified |
-| `com.warehouse.wms.facility-layout.zone.ZoneRegistered` | `warehouse.facility.events` | `zoneId` | `zoneId, siteCode` | verified |
+| `com.warehouse.wms.facility-layout.zone.ZoneRegistered` | `warehouse.facility.events` | `zoneId` | `zoneId, siteCode, zoneCode` | verified |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | `locationCode` | `locationCode, zoneId` | verified |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | `locationCode` | `locationCode` | verified |
 | `com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated` | `warehouse.facility.events` | `locationCode` | `locationCode, xM, yM, zM` | verified |
 
-A `TaskAvailable` with a `task_type` outside the six known types is stored but is
+A `TaskAvailable` with a `task_type` outside the six types a policy can make eligible
+(fulfillment-execution's enum also has `DISPATCH` and `ARRIVAL`) is stored but is
 never a candidate. facility-layout `data` also carries `eventName`, `eventType` and
 `occurredAt`, which are decoded and ignored. Every other type on these topics is
-ignored; dispatch is on the full `type`, never a suffix.
+ignored; dispatch is on the full `type`, never a suffix. A message that fails
+(transiently after 5 attempts, or because its payload can never be applied) goes to
+`<topic>.dlq` with `x-dlq-*` headers; see the
+[Runbook](/docs/operations/runbook#consumed).
 
-## Envelope helper (on develop)
+## Envelope helper
 
 `internal/adapters/kafka/cloudevents` builds and decodes every envelope:
 

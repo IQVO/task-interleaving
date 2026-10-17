@@ -10,10 +10,12 @@ sidebar_position: 2
 `task-interleaving` is a **Supporting** subdomain in the **WES** tier (CloudEvents
 subdomain segment `wes`). The verdict is the one in the fleet table of the
 warehouse-docs aggregator (`docs/strategic-design/subdomain-classification.md` on
-`main`, section *Scaffolded, not yet built*, 2026-10-17), and it matches the
+`main`, section *Scaffolded 2026-10-17, not yet running*), and it matches the
 strategic classification of
 [ADR 0001](/docs/adr/0001-task-interleaving-bounded-context). Neighbour rows below
-are copied from that table, not recalled.
+are copied from that table, not recalled. That section still describes the context
+as domain and contracts only; the verdict does not depend on it, and the service has
+since merged (see [Introduction](/docs/overview/introduction)).
 
 ## Why Supporting
 
@@ -51,8 +53,8 @@ bought engine behind an anti-corruption layer would push it to Generic.
 | `pick-face-replenishment` | Supporting | `wms` | no edge; its `REPLENISH` tasks arrive as ordinary tasks |
 | `task-interleaving` | **Supporting** | `wes` | this context |
 
-The full fleet table (fifteen built contexts plus the two scaffolded on 2026-10-17)
-is in the aggregator; this page lists only the contexts this one touches or
+The full fleet table (fifteen contexts built before 2026-10-17 plus the two created
+that day) is in the aggregator; this page lists only the contexts this one touches or
 explicitly excludes in ADR 0001.
 
 ## Tier is not classification

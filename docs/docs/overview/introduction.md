@@ -85,4 +85,4 @@ The [Runbook](/docs/operations/runbook#deployment) and
 | Read the contracts | [API overview](/docs/api-reference), [Event catalogue](/docs/api-reference/events) |
 | Read the decisions | [ADR index](/docs/adr) |
 
-Published at <https://iqvo.github.io/task-interleaving/>.
+Published at [https://iqvo.github.io/task-interleaving/](https://iqvo.github.io/task-interleaving/).

@@ -60,9 +60,9 @@ decision the fleet's promise to customers rests on.
 - One pure ranking function (`recommend.Recommend`, five exclusion rules, a stable
   order and a cut) and one port with one implementation (`travel.Rectilinear`).
 - No cross-aggregate rule in the domain; the rest of the design is event-fed local
-  copies, which are plumbing and are not on `develop` yet.
-- 100% statement coverage and a 100% mutation score on four packages
-  ([Testing](/docs/development/testing)).
+  copies, which are plumbing (`task_pool`, `zones`, `locations`, fed by the consumers).
+- A 100% mutation score on four packages and 99.9% coverage over domain plus
+  application against a 90% gate ([Testing](/docs/development/testing)).
 
 The **recommender** alone sits a little higher (0.40, 0.44): it is where the
 business rules live and where a better travel model would move the context up. The
@@ -71,7 +71,7 @@ business rules live and where a better travel model would move the context up. T
 ## Evolution
 
 **Custom-built, in genesis.** Scaffolded and decided on 2026-10-17 (ADRs 0001 to
-0004), with the service still unmerged. What would move it: a routing model (aisle
+0005); the service merged the same day. What would move it: a routing model (aisle
 and cross-aisle, fixed structures) that measurably beats rectilinear distance and
 that the WES relies on would push it towards Core; replacing the recommender with a
 bought engine behind an anti-corruption layer would push it down to Generic.

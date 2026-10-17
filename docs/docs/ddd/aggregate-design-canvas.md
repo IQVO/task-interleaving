@@ -10,7 +10,7 @@ sidebar_position: 14
 ddd-crew [Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas)
 for the two aggregates, filled from `internal/domain/stationtrip`,
 `internal/domain/policy` and [ADR 0002](/docs/adr/0002-stationtrip-and-policy-aggregates).
-Both aggregates are on `develop`; the repositories that persist them are not.
+Both aggregates are on `develop`, persisted by `internal/adapters/outbound/postgres` (and the in-memory adapter).
 
 ## StationTrip
 
@@ -57,10 +57,13 @@ it is handed.
 
 ### Concurrency and consistency
 
-A `version` counter exists on the aggregate. How concurrent writers are told apart
-(optimistic concurrency, `409 concurrent-modification` on REST) is a repository
-concern and is not on `develop`. Hint events of one station share a Kafka key, so
-they stay ordered on one partition (ADR 0004, designed).
+A `version` counter exists on the aggregate. Writers are told apart by the
+repository: `Save(trip, loadedVersion)` updates `WHERE version = <loaded>` and a
+lost race is `repository.ErrConcurrentModification` (`409 concurrent-modification`
+on REST, a retry in a consumer). The unique partial index
+`uq_hints_one_active_per_station` backs the one-Active-hint invariant in the
+database. Hint events of one station share the station id as Kafka key, so they
+stay ordered on one partition (ADR 0004; `events.Sink` sets the key).
 
 ## InterleavingPolicy
 
@@ -71,8 +74,8 @@ they stay ordered on one partition (ADR 0004, designed).
 | **Identity** | `SiteID`: a token of 1 to 64 runes, no whitespace, control characters or `/`. |
 | **State** | `Settings{MaxDetourM, MaxCandidates, HintTTL, EligibleTaskTypes, VerticalWeight}` and `version`. |
 | **Commands** | `New(site, Settings)` (version 1), `WithChanges(Settings)` (returns the next version, replacing all settings), `Restore(site, Settings, version)`. |
-| **Events raised** | none in the package. `InterleavingPolicyDeclared` (analytics only) will be built by the application layer. |
-| **Concurrency** | Replacing a policy requires `If-Match` with the current version over REST (`412 version-mismatch`), `409 concurrent-modification` on a lost race. Contract only. |
+| **Events raised** | none in the package. The `DeclarePolicy` use case enqueues `InterleavingPolicyDeclared` (analytics only) through `EventSink.PublishPolicyDeclared`. |
+| **Concurrency** | Replacing a policy requires `If-Match` with the current version over REST (`412 version-mismatch`), `409 concurrent-modification` on a lost race. Implemented in `usecases.DeclarePolicy` and the policy repository (`Save(rec, loadedVersion)`). |
 
 | # | Invariant | Error |
 | --- | --- | --- |
