@@ -45,7 +45,7 @@ scope and the mutation package list.
 | `make test` | `go test ./... -race` | unit, httptest and BDD (the BDD suite is a normal `Test` function) |
 | `make coverage` | `go test ./... -race -coverprofile=coverage.out -coverpkg=./internal/domain/...,./internal/application/...` then the 90% gate | The CI `test` job runs exactly this; a workflow that defined its own `-coverpkg` would fail `repo_lint` R11. |
 | `make arch-test` | `go test ./internal/architecture/... -v` | |
-| `make bdd` | `go test ./... -run TestFeatures -v` | the godog suite, `features_test.go` at the module root |
+| `make bdd` | `go test ./... -run TestFeatures -v` | the godog suite, `features/features_test.go` (the module root holds no Go file) |
 | `make integration` | `go test -tags=integration ./... -race -count=1` | needs only Docker; every test boots its own Postgres and Kafka |
 | `make mutation` | `gremlins unleash` on each of `./internal/domain/stationtrip ./internal/domain/recommend ./internal/domain/travel ./internal/domain/policy` | the fast, blocking subset (`MUTATION_FAST_PKGS`) |
 | `make mutation-full` | `gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30` | the exhaustive scheduled run |
@@ -100,9 +100,13 @@ go test ./internal/application/usecases -v
 lifecycle, supersede, consume, expiry, duplicates), `inert.feature` (3),
 `policy.feature` (12 blocks, one outline with 5 rows), `ranking.feature` (16),
 `simulation.feature` (10) and `tasks.feature` (10: pool and claim copies).
-`features_test.go` and its `features_setup/flow/assertions_test.go` companions
-wire the **real use cases over the in-memory adapters** with a fake clock, so the
-scenarios are fast and need no Docker. `go test . -run TestFeatures -v` ends with
+The godog runner `features/features_test.go` (package `features_test`, godog
+`Paths` `["."]`) and its `features/features_setup/flow/assertions_test.go`
+companions live in the same directory as the `.feature` files; the repository
+root holds no `.go` file at all (`TestNoGoFilesAtRepoRoot` in
+`internal/architecture` enforces it). They wire the **real use cases over the
+in-memory adapters** with a fake clock, so the scenarios are fast and need no
+Docker. `go test ./features -run TestFeatures -v` ends with
 `68 scenarios (68 passed)` and `608 steps (608 passed)`.
 
 ## Integration (testcontainers)

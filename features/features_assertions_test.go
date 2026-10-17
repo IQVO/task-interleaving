@@ -1,4 +1,4 @@
-package main_test
+package features_test
 
 import (
 	"errors"

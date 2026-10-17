@@ -33,9 +33,11 @@ assert nothing.
    package on its own: `stationtrip`, `recommend`, `travel`, `policy`
    (`MUTATION_FAST_PKGS` in the `Makefile`); `make mutation-full` is the
    exhaustive scheduled run.
-4. **BDD / behaviour** (`make bdd`, godog) — proves a use case works
-   end-to-end through the real HTTP surface. The HTTP adapter and its
-   feature files arrive in wave 2; until then `make bdd` has nothing to run.
+4. **BDD / behaviour** (`make bdd`, godog) — proves the use cases behave as
+   specified: `features/*.feature` plus the runner and steps in the same
+   directory (`features/features_test.go`, package `features_test`) drive the real
+   use cases over the in-memory adapters. No Go file may live at the repository
+   root (`TestNoGoFilesAtRepoRoot`).
 
 Also: `make arch-test` (the fitness tests in `internal/architecture`),
 `make integration` (needs Docker), `make vuln`.

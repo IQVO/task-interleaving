@@ -93,7 +93,9 @@ Lint it with the repo's spectral ruleset (`.spectral.yaml`). Then update
 ## 5. Behaviour: add a godog scenario
 
 If the endpoint is user-facing behaviour, add a Gherkin `.feature` file under `features/`
-for the `make bdd` target. The suite (`features_test.go`) drives the real use
+for the `make bdd` target. The runner and steps (`features/features_test.go`, package
+`features_test`, godog `Paths` `["."]`) sit in the same `features/` directory (the
+repository root holds no `.go` file, `TestNoGoFilesAtRepoRoot`) and drive the real use
 cases over the in-memory adapters, not the HTTP server, so also add an httptest
 in `internal/adapters/inbound/http` and a shape check against `apis/openapi.yaml`
 (`shape_test.go`).

@@ -45,7 +45,7 @@ Every variable is on [Configuration](docs/docs/operations/configuration.md); the
 apis/                 openapi.yaml, asyncapi.yaml (the contracts)
 cmd/api/              the composition root (config, adapters, consumers, relay, topics)
 migrations/           embedded SQL migrations (0001_interleaving_schema)
-features/             godog scenarios (6 files, 68 scenarios)
+features/             godog scenarios (6 .feature files, 68 scenarios) and their runner and steps (package features_test); the repo root holds no .go file
 docs/                 Docusaurus site (docs/docs) and the ADRs (docs/adr)
 internal/domain/      policy, travel, recommend, stationtrip
 internal/application/ usecases, ports, repository, outbox
