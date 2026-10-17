@@ -101,7 +101,8 @@ outbox in the same transaction as the aggregate (ADR 0004).
 
 **Input.** The station's `Site`, the `Origin` (location and optional point), the
 open-task `Pool` (`ID`, `Type`, `Site`, `FromLocation`, optional `FromPoint`,
-`ToLocation`), the `Policy` and the id of the task just completed.
+`ToLocation`), the `Policy`, the id of the task just completed and the travel
+`Model` (required; see Policy ports).
 
 **Rules (FINAL for v1).** A pool task is a candidate when ALL hold:
 
@@ -136,8 +137,9 @@ d = |x1-x2| + |y1-y2| + VerticalWeight * |z1-z2|     (metres, rounded to 0.1 m)
 A place without known geometry (no point, or a non-finite coordinate) yields
 "unknown", never 0. Aisle geometry, cross-aisle routes and fixed structures
 (facility-layout ADR 0017) are PLANNED refinements: a new model version behind
-the same port with its own ADR, selected per policy. The recommender builds the
-model from the policy's `VerticalWeight` unless the caller passes one.
+the same port with its own ADR, selected per policy. The caller hands the model to
+the recommender; `recommend.RectilinearFor(policy)` builds the v1 model from the
+policy's `VerticalWeight`.
 
 ### Human decision and read-only simulation
 
