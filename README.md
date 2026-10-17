@@ -6,6 +6,40 @@ Task Interleaving: WES-tier Supporting bounded context of the warehouse-systems 
 - Scaffolded from `warehouse-harness-template` (v3). Guides: `.claude/rules/`, sensors: `HARNESS.md`.
 - Commands: `make check-fast`, `make check-all`, `make integration`.
 
+## Status
+
+The service is being built on a separate branch and is not on `develop` yet. What `develop` has today:
+
+- the domain: `internal/domain/policy` (InterleavingPolicy), `travel` (the distance port and `rectilinear-v1`), `recommend` (the pure ranker) and `stationtrip` (StationTrip with its hint lifecycle), at 100% statement coverage and a 90/90 mutation gate;
+- the contracts: `apis/openapi.yaml` (REST) and `apis/asyncapi.yaml` (events);
+- the architecture fitness tests in `internal/architecture`;
+- the CloudEvents helper (`internal/adapters/kafka/cloudevents`) and the acks=all Kafka writer constructor (`internal/adapters/outbound/kafka`);
+- ADRs 0001 to 0004 in `docs/adr/`.
+
+There is no `cmd/`, no migration, no HTTP server, no Kafka consumer and no outbox relay on `develop`, so there is nothing to start yet.
+
+## Layout
+
+```text
+apis/                 openapi.yaml, asyncapi.yaml (the contracts)
+docs/                 Docusaurus site (docs/docs) and the ADRs (docs/adr)
+internal/domain/      policy, travel, recommend, stationtrip
+internal/adapters/    kafka/cloudevents, outbound/kafka
+internal/architecture hexagonal and fleet fitness tests
+scripts/harness/      agent-guide and config lint
+```
+
+## Quality gates
+
+| Command | What it runs |
+| --- | --- |
+| `make check` | gofmt check, vet, build, golangci-lint v2.13.1, `go test -race` |
+| `make check-all` | `check` plus the 90% coverage gate, architecture tests and BDD |
+| `make arch-test` | the fitness tests in `internal/architecture` |
+| `make mutation` | gremlins on the four domain packages, thresholds in `.gremlins.yaml` |
+
+CI is `.github/workflows/ci.yml`; the jobs are listed in the Testing page below.
+
 ## Documentation
 
 Published at <https://iqvo.github.io/task-interleaving/> (built from `docs/` by `.github/workflows/docs.yml`; pull requests build it, `main` deploys it). The service itself is not on `develop` yet: the pages below describe the domain, the contracts and the tests that are, and mark everything else as designed or pending.
