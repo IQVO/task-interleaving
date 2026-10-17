@@ -5,16 +5,17 @@ paths:
   - "apis/asyncapi*"
 ---
 
-<!-- TEMPLATE (warehouse-harness-template v2): fill in every "FILL IN" for
-     THIS repo, or delete this file if the repo publishes/consumes no Kafka
-     events. The "CloudEvents 1.0 is MANDATORY" section is NOT a
-     placeholder: keep it verbatim, only substitute the per-repo values. -->
 # Cross-service integration events (Kafka)
 
-FILL IN: state whether this service PUBLISHES, CONSUMES, or both, and
-to/from which topic(s). Fleet naming: `warehouse.<context>.events`
-(integration) and `warehouse.<context>.analytics` (consumed only by this
-service's own analytics projector).
+task-interleaving PUBLISHES and CONSUMES. It publishes to
+`warehouse.task-interleaving.events` (integration; only `InterleavingHintIssued`,
+read by fulfillment-execution) and `warehouse.task-interleaving.analytics` (all
+four types, read only by this service's own analytics side), both through the
+transactional outbox. It consumes `warehouse.fulfillment.events` and
+`warehouse.facility.events` into durable local copies. Contracts:
+`apis/asyncapi.yaml`, `docs/adr/0003-local-copies-and-consumed-contracts.md` and
+`docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`. Fleet naming:
+`warehouse.<context>.events` (integration) and `warehouse.<context>.analytics`.
 
 ## Events: CloudEvents 1.0 is MANDATORY
 
@@ -29,9 +30,9 @@ not a preference — there is nothing to "choose" here:
   `TestNoEventEnvelopeToggleOrFlatEnvelope` fails CI on any of them.
 - Build/validate/(un)marshal with `github.com/cloudevents/sdk-go/v2/event`
   (latest v2) via ONE helper package,
-  `internal/adapters/kafka/cloudevents/` — copy it from this template's
-  `templates/cloudevents/cloudevents.go.tmpl` (+ its test) and change only
-  the per-repo constants. Transport stays `segmentio/kafka-go` (no sdk-go
+  `internal/adapters/kafka/cloudevents/` (`cloudevents.go` + its test; only the
+  per-repo constants differ from the fleet's other repos). Transport stays
+  `segmentio/kafka-go` (no sdk-go
   protocol/client packages, no hand-rolled CloudEvent structs).
 - Every produced message carries the Kafka header
   `content-type: application/cloudevents+json; charset=UTF-8`
@@ -47,8 +48,8 @@ not a preference — there is nothing to "choose" here:
   `dataschema=urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.
   No custom extension attributes without an ADR.
 - `type` = `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`
-  (subdomain `wms` or `wes`; FILL IN this repo's exact prefix, e.g.
-  `com.warehouse.wes.order-management`). The SAME `type` names the
+  (subdomain `wms` or `wes`; this repo's exact prefix is
+  `com.warehouse.wes.task-interleaving`, entity `stationtrip` or `policy`). The SAME `type` names the
   occurrence on both the integration and the analytics topic; `dataschema`
   names the payload shape. Breaking payload change => new `.v2` type + new
   dataschema version, never mutate an existing one.
@@ -62,40 +63,75 @@ not a preference — there is nothing to "choose" here:
   the `content-type` header); a legacy-flat-message-rejected test per
   consumer; Kafka integration tests via testcontainers only.
 
-Full standard, subdomain table and the fleet's cross-service type
-catalogue: warehouse-docs `docs/strategic-design/event-standard-cloudevents.md`.
-Record it in this repo as its own ADR "CloudEvents 1.0 as the mandatory
-event envelope" under `docs/docs/adr/`.
+The full standard, subdomain table and the fleet's cross-service type
+catalogue live in the warehouse-docs Event Standard page (CloudEvents). This
+repo records its envelope and type catalogue in
+`docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`;
+`TestEventCatalogueMatchesContract` keeps that ADR and `apis/asyncapi.yaml` in
+step.
 
 ### Published types
 
-FILL IN: one row per published event, exact strings.
+All four are on the analytics topic `warehouse.task-interleaving.analytics`
+(`dataschema` stream `analytics`); only the first is also on the integration
+topic `warehouse.task-interleaving.events` (stream `events`). Kafka key =
+`subject`. Both rows of an occurrence are written by the outbox in the
+aggregate's transaction with the same `id`.
 
 | `type` | topic(s) | `subject` | `dataschema` |
 | --- | --- | --- | --- |
-| `com.warehouse.<sub>.<ctx>.<entity>.<EventName>` | `warehouse.<ctx>.events` | aggregate id | `urn:warehouse:<repo>:events:<EventName>:v1` |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | `warehouse.task-interleaving.events` + `warehouse.task-interleaving.analytics` | station id | `urn:warehouse:task-interleaving:<events\|analytics>:InterleavingHintIssued:v1` |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintConsumed` | `warehouse.task-interleaving.analytics` | station id | `urn:warehouse:task-interleaving:analytics:InterleavingHintConsumed:v1` |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintExpired` | `warehouse.task-interleaving.analytics` | station id | `urn:warehouse:task-interleaving:analytics:InterleavingHintExpired:v1` |
+| `com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared` | `warehouse.task-interleaving.analytics` | site id | `urn:warehouse:task-interleaving:analytics:InterleavingPolicyDeclared:v1` |
+
+`data` is snake_case with optional fields omitted; payload shapes are in the ADR
+0004 table and `apis/asyncapi.yaml`. A superseded hint raises no event: the
+station's next `InterleavingHintIssued` replaces it. Only
+`InterleavingHintIssued` may be relied on by sibling contexts.
 
 ### Consumed types
 
-FILL IN: one row per consumed event — the EXACT `type` string from the
-producer's catalogue (byte-identical; see the cross-service catalogue on the
-Event Standard page).
+Exact strings from the producers' catalogues (ADR 0003). Every other type on
+these topics is ignored; a message that is not a valid CloudEvent is logged at
+WARN and committed past.
 
 | `type` | topic | producer |
 | --- | --- | --- |
+| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | fulfillment-execution (pending producer change P2) |
+| `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | fulfillment-execution (pending producer change P2) |
+| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | fulfillment-execution (verified) |
+| `com.warehouse.wms.facility-layout.zone.ZoneRegistered` | `warehouse.facility.events` | facility-layout (verified) |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout (verified) |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout (verified) |
+| `com.warehouse.wms.facility-layout.locationslot.LocationGeometryUpdated` | `warehouse.facility.events` | facility-layout (verified) |
+
+Effects: the fulfillment events feed the open-task pool (`TaskAvailable` upserts,
+`TaskClaimed` removes it from the open pool and may mark the station's hint
+Consumed, `TaskCompleted` closes the task and records the station position); the
+facility events feed location geometry and site mapping. Each effect and the
+CloudEvents `id` claim commit in ONE database transaction, then the offset is
+committed. A claim or completion for a task the pool never saw is counted and
+skipped, never dead-lettered.
 
 ## Consumer group id
 
-If this service consumes Kafka: state where the consumer group id comes
-from. It MUST be env-configurable, never a hardcoded string literal --
+The group ids come from the environment, never a string literal --
 `internal/architecture/fitness_test.go`'s
 TestKafkaConsumerGroupNeverHardcodedInline enforces this (a real incident:
 wes-work-planning's hardcoded group id let a locally-run e2e-tests process
 silently collide with the live in-cluster Deployment's consumer group on
 the shared fleet Kafka broker).
 
-If this consumer replays from FirstOffset on every start to build an
-in-memory read model (rather than resuming from a committed offset), the
-group id must additionally be UNIQUE PER PROCESS INSTANCE (hostname+PID+
-timestamp), not just configurable -- see HARNESS.md's Kafka section for
-why a shared group breaks that pattern specifically.
+| Concern | Mode env | Consumer group env |
+| --- | --- | --- |
+| Fulfillment (pool, claims, completions) | `FULFILLMENT_MODE` | `FULFILLMENT_CONSUMER_GROUP` |
+| Layout (zones, slots, geometry) | `LAYOUT_MODE` | `LAYOUT_CONSUMER_GROUP` |
+
+A mode is `kafka` or `permissive`; the default is `permissive` (no consumer
+starts, the local copy is whatever is in the database). Mode `kafka` with its
+group variable unset is a boot error. Both consumers are stable
+process-and-commit consumers (no full replay), so a stable group id is correct;
+if a consumer ever replays from FirstOffset on every start to build an in-memory
+read model, its group id must additionally be UNIQUE PER PROCESS INSTANCE
+(hostname+PID+timestamp). Outbox attempts: `OUTBOX_MAX_ATTEMPTS`.
