@@ -1,0 +1,1 @@
+{"parameters":[{"name":"siteId","in":"path","required":true,"description":"The site (the fleet's site code), 1 to 64 characters without whitespace or `/`.","schema":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[^\\s/]+$"},"example":"SITE-1"}]}
