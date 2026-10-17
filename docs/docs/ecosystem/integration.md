@@ -21,8 +21,9 @@ Both consumers are built and verified against their producers and are **always
 on**: the service refuses to boot without `KAFKA_BROKERS` and the two consumer
 group ids ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
 `warehouse-infra` has no entry for this service, so no deployment of it exists
-in the shared cluster yet, and the four topics it needs are infrastructure's to
-create.
+in the shared cluster yet. The cluster broker auto-creates every business topic
+on first write and infrastructure declares none, so the four topics it needs
+need no infrastructure entry ([ADR 0006 Amendment 1](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
 
 ## Edge map
 
@@ -154,8 +155,8 @@ in the cluster until `warehouse-infra` installs the chart.
 | Situation | Behaviour |
 | --- | --- |
 | Postgres down at boot | Retried for about 15 s, then the process exits 1 and the orchestrator restarts it. |
-| Postgres down at runtime | REST answers 500 `internal-error` (statement timeout 5 s); consumers fail transiently, retry, and after 5 attempts dead-letter the message. `/readyz` stays 200 (it checks nothing). |
-| Kafka down | The REST API is unaffected. The relay logs `outbox relay pass failed` and retries every interval; rows stay in `outbox_events`. Consumers block on the reader and resume. Kafka connections are lazy, so boot never waits for the broker. |
+| Postgres down at runtime | REST answers 500 `internal-error` (statement timeout 5 s); consumers fail transiently, retry, and after 5 attempts dead-letter the message. `/readyz` answers 503 `dependency-unavailable` (`not ready: postgres`) within its 3 s cache. |
+| Kafka down | The REST API is unaffected, but `/readyz` answers 503 `not ready: kafka` (no broker answers a metadata request; a missing topic alone never does). The relay logs `outbox relay pass failed` and retries every interval; rows stay in `outbox_events`. Consumers block on the reader and resume. Kafka connections are lazy, so boot never waits for the broker. |
 | Pool copy stale or empty | Hints are stale or absent, never wrong assignments: a hint is advisory and expires. |
 | Site has no policy | Inert: no hint, `GET /sites/{siteId}/policy` is `404 policy-not-found`, a simulation is `422 policy-not-declared`. |
 | Candidate task claimed elsewhere | `TaskClaimed` removes it from the pool copy before the next ranking; an already issued hint keeps listing it and loses the tie-break in fulfillment-execution, which re-checks the claim. |

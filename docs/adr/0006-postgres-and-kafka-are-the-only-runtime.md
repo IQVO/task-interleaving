@@ -4,7 +4,10 @@
 
 Accepted (2026-10-17). Supersedes the in-memory and `permissive` statements of
 [ADR 0003](0003-local-copies-and-consumed-contracts.md) and
-[ADR 0005](0005-persistence-and-evaluation-semantics.md).
+[ADR 0005](0005-persistence-and-evaluation-semantics.md). Amended the same day
+by [Amendment 1](#amendment-1-the-fleet-topic-convention) (topics, readiness and
+the relay writer): where the text below says infrastructure owns the topics or
+that `/readyz` needs them, the amendment governs.
 
 ## Context
 
@@ -50,7 +53,8 @@ runs on a real database and real Kafka, wired for real.
   relay that cannot be built (no outbox store, no brokers) fails the boot. The
   shutdown order is unchanged: `/readyz` flips, HTTP drains, the consumers stop,
   the expiry worker stops, the relay stops, the pool closes.
-- **`/readyz` is real.** It is ready only when the drain gate is open AND
+- **`/readyz` is real.** *(Amended: the Kafka part is reachability only, see
+  Amendment 1.)* It is ready only when the drain gate is open AND
   Postgres answers a ping AND a Kafka metadata request succeeds with a leader
   for every topic the service consumes or produces (`warehouse.fulfillment.events`,
   `warehouse.facility.events`, `warehouse.task-interleaving.events`,
@@ -63,7 +67,9 @@ runs on a real database and real Kafka, wired for real.
   does not look at any dependency.
 - **Migrations at boot stay**, with backoff (`internal/bootretry`) and the
   `MIGRATIONS_DATABASE_URL` fallback.
-- **The service never creates topics.** Infrastructure owns them. At boot the
+- **The service never creates topics.** *(Amended: the statement that
+  infrastructure owns them and that a missing topic makes `/readyz` fail is
+  superseded by Amendment 1.)* Infrastructure owns them. At boot the
   service logs the topics it consumes and produces. A topic that does not exist
   yet makes `/readyz` report `kafka` not ready and nothing else; the process
   keeps running.
@@ -72,6 +78,10 @@ runs on a real database and real Kafka, wired for real.
   only because of the in-memory mode).
 
 ## Missing topics: what kafka-go does (verified)
+
+*(Superseded in part by Amendment 1: the `503` on missing topics and the
+"infrastructure creates the topics" step below describe the first version. The
+consumer and relay observations still hold.)*
 
 The end-to-end test boots the real entry point against a broker with topic
 auto-creation off, before any topic exists:
@@ -102,10 +112,65 @@ unchanged by this ADR.
 - A misconfigured deployment now fails to boot (or reports not ready) instead of
   running without a relay or consumers.
 - Local runs need Postgres and Kafka: `make run-local` brings both up with
-  `docker-compose.yml` (a job creates the four topics) and runs the service on
+  `docker-compose.yml` (a job pre-creates the four topics locally) and runs the service on
   them.
 - The unit and BDD suites keep using the in-memory doubles; no `cmd` test relies
   on an in-memory runtime of the binary. The command tests are pure
   configuration tests or run the real entry point on testcontainers.
 - The `permissive` mode of ADR 0003 and the in-memory development mode of ADR
   0005 no longer exist. Their bodies stay as written, with a pointer here.
+
+## Amendment 1: the fleet topic convention
+
+Found before the first deployment. The fleet convention (warehouse-infra
+`terraform/kafka.tf`) is that **the broker auto-creates every business topic on
+first write** (`num.partitions=8`), infrastructure declares **no** topics, and
+every service's Writer sets `AllowAutoTopicCreation: true`. The first version of
+this ADR assumed the opposite (infrastructure owns the topics) and broke the
+convention twice:
+
+1. The relay's writer (`NewWriter`) did not set `AllowAutoTopicCreation`, so on
+   the cluster the service's own topics (`warehouse.task-interleaving.events`
+   and `warehouse.task-interleaving.analytics`) were never created: the relay
+   failed with `UnknownTopicOrPartition` and rows sat at the attempt cap.
+2. `/readyz` required every consumed AND produced topic to exist with a leader.
+   On a fresh cluster the output topics do not exist until the service first
+   publishes, and a not-ready pod receives no traffic, so it could never be
+   driven to publish: a deadlock. The consumed topics
+   (`warehouse.fulfillment.events`, `warehouse.facility.events`) only exist once
+   their producers ran, an ordering coupling no other service has.
+
+Decision (this replaces the topic statements above, the rest stands):
+
+- **The relay writer sets `AllowAutoTopicCreation: true`** (`NewWriter`, next to
+  the DLQ writers that already did), with a unit test
+  (`TestNewWriterAllowsAutoTopicCreation`). The service still never calls a
+  topic-admin API (`CreateTopics` and the like): the broker creates a topic when
+  the first message is written to it.
+- **`/readyz` = drain gate AND Postgres ping AND a Kafka broker answers a
+  metadata request.** The request names no topics (an empty, non-nil list; a nil
+  list would mean all topics), so it is a reachability check, cheap, and asking
+  never creates a topic. A missing or leaderless topic, consumed or produced, is
+  **not** a readiness failure. The 3 second cache, the 2 second bound, the `503`
+  `application/problem+json` with the `dependency-unavailable` slug (`not ready:
+  kafka`, never the cause) and the drain answer are unchanged.
+- **A missing consumed topic shows as consumer retry logs**, not as unreadiness:
+  kafka-go keeps retrying the group join and the `ErrorLogger` turns each retry
+  into an ERROR line (`kafka reader error; retrying`, with the consumer and the
+  topic). Once the producer has written, the topic exists and the same process
+  consumes from the first offset with no restart. The boot line `kafka topics
+  (...)` stays, informational only.
+- **Local runs** (`docker-compose.yml`) still pre-create the four topics with a
+  job; that is a local convenience, not the contract.
+- **The end-to-end test** keeps auto-creation OFF in its testcontainers broker so
+  it controls when a topic appears: `/readyz` is `200` while the topics do not
+  exist and the broker is up, then the test creates the topics and the existing
+  flow runs unchanged. `/readyz` still reports `503` while Kafka is unreachable
+  (`TestServiceStaysAliveButNotReadyWhileKafkaIsUnreachable`). That
+  `AllowAutoTopicCreation` takes effect against a broker with auto-creation
+  enabled is covered at unit level only (the shared test broker is configured
+  once per binary); the cluster is where it is proven.
+
+Consequences: a fresh cluster deploys in any order and the pod becomes ready
+without waiting for any producer; a topic missing for long is visible in the
+consumer logs rather than by taking the pod out of rotation.

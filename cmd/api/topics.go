@@ -17,16 +17,13 @@ func producedTopics() []string {
 	return []string{events.TopicEvents, events.TopicAnalytics}
 }
 
-// runtimeTopics is every topic /readyz requires to exist with a leader. The
-// service never creates topics: infrastructure owns them. A topic that is
-// missing makes the consumers retry (and log) and the service not-ready; it
-// is not a crash loop.
-func runtimeTopics() []string {
-	return append(consumedTopics(), producedTopics()...)
-}
-
 // logTopics records, once at boot, what the service consumes and produces.
+// It is informational only: topics play no part in /readyz. The cluster broker
+// auto-creates a topic on first write (the relay's writer sets
+// AllowAutoTopicCreation), a consumed topic exists once its producer ran, and
+// until then the consumer retries and logs. The service never creates a topic
+// through an admin API.
 func logTopics(logger *slog.Logger, brokers []string) {
-	logger.Info("kafka topics (owned by infrastructure; the service never creates them)",
+	logger.Info("kafka topics (informational; the broker auto-creates them on first write, the service never creates them through an admin API)",
 		"brokers", brokers, "consumes", consumedTopics(), "produces", producedTopics())
 }

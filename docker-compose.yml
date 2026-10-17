@@ -1,7 +1,10 @@
 # Local infrastructure for `make run-local`: the real Postgres and the real
-# Kafka the service runs on (ADR 0006: there is no in-memory mode). The
-# `topics` job plays the part of the infrastructure team: the service never
-# creates topics, so it creates the four this context consumes and produces.
+# Kafka the service runs on (ADR 0006: there is no in-memory mode). On the
+# shared cluster the broker auto-creates every topic on first write (ADR 0006
+# Amendment 1); locally the `topics` job pre-creates the four this context
+# consumes and produces, with one partition, so the consumed topics exist
+# before the upstream contexts have published. The service never creates
+# topics through an admin API.
 services:
   postgres:
     image: postgres:16-alpine
@@ -25,7 +28,8 @@ services:
     ports:
       - "9092:9092"
     environment:
-      # Like the shared cluster: topics are created by infrastructure only.
+      # Auto-creation is off locally so the `topics` job decides the topics
+      # (one partition each); the shared cluster auto-creates on first write.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     healthcheck:
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]

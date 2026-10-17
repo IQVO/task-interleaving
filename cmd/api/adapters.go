@@ -125,8 +125,9 @@ func buildServer(a adapters, readiness *inboundhttp.Readiness) *inboundhttp.Serv
 }
 
 // buildReadiness makes /readyz real: the drain gate AND a Postgres ping AND a
-// Kafka metadata check (brokers reachable, every runtime topic has a leader).
-// The verdict is cached for inboundhttp.DefaultReadinessTTL.
+// Kafka metadata check (a broker answers a topic-less metadata request;
+// reachability only, never topics: the broker auto-creates them on first
+// write). The verdict is cached for inboundhttp.DefaultReadinessTTL.
 func buildReadiness(a adapters, kafkaCheck func(context.Context) error) *inboundhttp.Readiness {
 	return inboundhttp.NewReadiness(0, 0,
 		inboundhttp.Dependency{Name: "postgres", Check: a.ping},

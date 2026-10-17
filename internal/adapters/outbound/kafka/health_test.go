@@ -3,7 +3,6 @@ package kafka
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -20,50 +19,62 @@ func (f *fakeMetadata) Metadata(_ context.Context, req *kafkago.MetadataRequest)
 	return f.resp, f.err
 }
 
-func led(name string) kafkago.Topic {
-	return kafkago.Topic{Name: name, Partitions: []kafkago.Partition{{ID: 0, Leader: kafkago.Broker{ID: 1}}}}
+func answering(topics ...kafkago.Topic) *kafkago.MetadataResponse {
+	return &kafkago.MetadataResponse{Brokers: []kafkago.Broker{{ID: 1, Host: "b", Port: 9092}}, Topics: topics}
 }
 
-func TestBrokerCheckPassesWhenEveryTopicHasALeader(t *testing.T) {
-	f := &fakeMetadata{resp: &kafkago.MetadataResponse{Topics: []kafkago.Topic{led("a"), led("b")}}}
-	if err := NewBrokerCheckWithClient(f, []string{"a", "b"}).Check(context.Background()); err != nil {
+func TestBrokerCheckPassesWhenABrokerAnswers(t *testing.T) {
+	f := &fakeMetadata{resp: answering()}
+	if err := NewBrokerCheckWithClient(f).Check(context.Background()); err != nil {
 		t.Fatalf("check = %v", err)
 	}
-	if got := f.req.Topics; len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("the request must name exactly the wanted topics, got %v", got)
+}
+
+// The request must name no topics: an empty, NON-nil list (a nil list is the
+// null that means "all topics").
+func TestBrokerCheckAsksForNoTopics(t *testing.T) {
+	f := &fakeMetadata{resp: answering()}
+	if err := NewBrokerCheckWithClient(f).Check(context.Background()); err != nil {
+		t.Fatalf("check = %v", err)
+	}
+	if f.req == nil || f.req.Topics == nil || len(f.req.Topics) != 0 {
+		t.Fatalf("request topics = %#v, want an empty non-nil list", f.req)
 	}
 }
 
 func TestBrokerCheckFailsWhenTheBrokerIsUnreachable(t *testing.T) {
 	boom := errors.New("connection refused")
-	err := NewBrokerCheckWithClient(&fakeMetadata{err: boom}, []string{"a"}).Check(context.Background())
+	err := NewBrokerCheckWithClient(&fakeMetadata{err: boom}).Check(context.Background())
 	if !errors.Is(err, boom) {
 		t.Fatalf("check = %v, want the cause wrapped", err)
 	}
 }
 
-func TestBrokerCheckNamesEveryProblemTopic(t *testing.T) {
-	missing := kafkago.Topic{Name: "missing", Error: kafkago.UnknownTopicOrPartition}
-	noLeader := kafkago.Topic{Name: "orphan", Partitions: []kafkago.Partition{{ID: 3, Leader: kafkago.Broker{ID: -1}}}}
-	badPartition := kafkago.Topic{Name: "broken", Partitions: []kafkago.Partition{{ID: 1, Error: kafkago.LeaderNotAvailable}}}
-	empty := kafkago.Topic{Name: "empty"}
-	resp := &kafkago.MetadataResponse{Topics: []kafkago.Topic{led("fine"), missing, noLeader, badPartition, empty}}
-	err := NewBrokerCheckWithClient(&fakeMetadata{resp: resp}, []string{"fine", "missing", "orphan", "broken", "empty", "absent"}).Check(context.Background())
-	if err == nil {
-		t.Fatal("a missing topic must fail the check")
-	}
-	for _, want := range []string{"missing: ", "orphan: partition 3 has no leader", "broken: partition 1", "empty: no partitions", "absent: not in the broker's answer"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q lacks %q", err, want)
+func TestBrokerCheckFailsWhenTheAnswerListsNoBroker(t *testing.T) {
+	for name, resp := range map[string]*kafkago.MetadataResponse{
+		"nil answer":      nil,
+		"no broker given": {},
+	} {
+		if err := NewBrokerCheckWithClient(&fakeMetadata{resp: resp}).Check(context.Background()); err == nil {
+			t.Errorf("%s: a metadata answer without a broker must fail the check", name)
 		}
 	}
-	if strings.Contains(err.Error(), "fine") {
-		t.Errorf("a healthy topic must not be reported: %v", err)
+}
+
+// Missing topics are NOT a readiness failure: the broker auto-creates them on
+// first write and the consumers retry and log until their producer ran.
+func TestBrokerCheckIgnoresMissingAndLeaderlessTopics(t *testing.T) {
+	missing := kafkago.Topic{Name: "missing", Error: kafkago.UnknownTopicOrPartition}
+	noLeader := kafkago.Topic{Name: "orphan", Partitions: []kafkago.Partition{{ID: 3, Leader: kafkago.Broker{ID: -1}}}}
+	empty := kafkago.Topic{Name: "empty"}
+	f := &fakeMetadata{resp: answering(missing, noLeader, empty)}
+	if err := NewBrokerCheckWithClient(f).Check(context.Background()); err != nil {
+		t.Fatalf("topics missing must still be ready, got %v", err)
 	}
 }
 
 func TestNewBrokerCheckDoesNotDial(t *testing.T) {
-	if NewBrokerCheck([]string{"127.0.0.1:1"}, []string{"a"}) == nil {
+	if NewBrokerCheck([]string{"127.0.0.1:1"}) == nil {
 		t.Fatal("nil check")
 	}
 }

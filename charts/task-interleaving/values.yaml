@@ -161,8 +161,13 @@ database:
 # service runs on real Kafka only (ADR 0006) and the chart refuses to render
 # without brokers. Produced topics: warehouse.task-interleaving.events and
 # warehouse.task-interleaving.analytics; consumed: warehouse.fulfillment.events
-# and warehouse.facility.events. Topics are owned by infrastructure; the
-# service never creates them, and /readyz answers 503 until each has a leader.
+# and warehouse.facility.events. The service never creates topics through an
+# admin API: the relay's writer auto-creates the service's own topics on first
+# write (AllowAutoTopicCreation, the fleet convention: the cluster broker
+# creates every business topic on first write and infrastructure declares
+# none), and /readyz does not wait for any topic. A consumed topic that does
+# not exist yet (its producer has not written) shows as consumer retry logs,
+# not as unreadiness.
 kafka:
   brokers: ""
 
@@ -174,9 +179,11 @@ extraEnv: []
 # failureThreshold of the startup probe gives a ~60 s window before the
 # kubelet gives up. Once it succeeds, liveness takes over (/healthz is
 # liveness only). Readiness uses /readyz, which checks the drain gate,
-# Postgres AND Kafka (a leader for every consumed and produced topic; the
-# verdict is cached for 3 s): a Kafka outage takes the pod out of the Service
-# and a shutdown flips it to not-ready first, both by design.
+# Postgres AND that a Kafka broker answers a metadata request (reachability
+# only, never topics; a missing consumed topic is consumer retry logs, not
+# unreadiness; the verdict is cached for 3 s): a Kafka outage takes the
+# pod out of the Service and a shutdown flips it to not-ready first, both by
+# design.
 startupProbe:
   httpGet:
     path: /healthz
