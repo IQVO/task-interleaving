@@ -15,11 +15,14 @@ import (
 )
 
 // TaskCompletion is a decoded TaskCompleted payload: only the task id is
-// required, the end position is read from the local copy of the task. At is the
-// completion instant (the CloudEvents time); zero means "now".
+// required, the end position is read from the local copy of the task. StationID
+// is the payload's station_id (ADR 0003: the station that completed the task);
+// when it is blank the claimer recorded in the pool copy is used instead. At is
+// the completion instant (the CloudEvents time); zero means "now".
 type TaskCompletion struct {
-	TaskID string
-	At     time.Time
+	TaskID    string
+	StationID string
+	At        time.Time
 }
 
 // ApplyTaskCompleted marks the task COMPLETED and records the completion on the
@@ -56,12 +59,21 @@ func (uc *ApplyTaskCompleted) Handle(ctx context.Context, eventID string, c Task
 		if err := uc.Pool.Save(ctx, task); err != nil {
 			return "", fmt.Errorf("save task: %w", err)
 		}
-		station, err := stationtrip.NewStationID(task.ClaimedBy)
+		station, err := stationtrip.NewStationID(completer(c, task))
 		if err != nil || blank(task.ToLocation) || blank(task.SiteID) {
 			return OutcomeIgnored, nil
 		}
 		return uc.record(ctx, station, task, c.At)
 	})
+}
+
+// completer is the station that completed the task: the one the event names,
+// else the claimer of the pool copy.
+func completer(c TaskCompletion, task repository.Task) string {
+	if blank(c.StationID) {
+		return task.ClaimedBy
+	}
+	return c.StationID
 }
 
 // record puts the station at the end of the completed task and issues the hint.
