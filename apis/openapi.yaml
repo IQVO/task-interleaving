@@ -1,0 +1,834 @@
+openapi: 3.0.3
+info:
+  title: Task Interleaving API
+  version: 1.0.0
+  description: |
+    The WES-tier advisor of task interleaving in the warehouse-systems platform
+    (ADR 0001, ADR 0002). When a station completes a task, this context looks at
+    the open-task pool and, if one or more open tasks are close enough to where the
+    operator now stands, issues an **interleaving hint**: a short ranked list of
+    candidate tasks. Policy `rectilinear-v1`: the detour of a candidate is the
+    rectilinear distance `|dx| + |dy| + verticalWeight*|dz|` in metres, rounded to
+    0.1 m, from the station's position to the candidate's first location.
+
+    The hint is **advisory**. fulfillment-execution may use it only as a tie-break
+    inside one priority band, fails open when it is absent or expired, and keeps
+    `claimNext` as its only claim path; nothing in this API assigns work to a
+    worker (ADR 0001, ADR 0002).
+
+    A site is **inert** until an operator declares its interleaving policy with
+    `PUT /sites/{siteId}/policy`: no hint is issued for a site without one. Hints
+    are computed from local copies fed by events (open-task pool, claims, location
+    geometry; ADR 0003); this API never calls a sibling context. Events are
+    published as CloudEvents on `warehouse.task-interleaving.events` through a
+    transactional outbox (see `apis/asyncapi.yaml`).
+
+    Mutable resources carry a `version` (starts at 1, +1 per accepted change) and a
+    matching strong `ETag: "<version>"` header. A policy update sends `If-Match`;
+    a stale value is a 412 `version-mismatch`, and a write that loses a race at the
+    database is a 409 `concurrent-modification`.
+
+    Errors are RFC 7807 problem documents with
+    `type = https://errors.task-interleaving.warehouse-systems.dev/<slug>`.
+    There is no authentication layer (fleet decision 2026-09-11).
+  contact:
+    name: task-interleaving maintainers
+    url: https://github.com/IQVO/task-interleaving
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: http://localhost:8000/api/task-interleaving
+    description: Local kind cluster through Kong
+tags:
+  - name: Policy
+    description: The per-site interleaving policy; a site without one is inert.
+  - name: Hints
+    description: The interleaving hints issued to stations and their outcome.
+  - name: Stations
+    description: What the context knows about a station - its position and active hint.
+  - name: Recommendations
+    description: Read-only simulation of the recommender; issues nothing.
+  - name: Health
+    description: Liveness and readiness probes.
+
+paths:
+  /sites/{siteId}/policy:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    put:
+      operationId: declareInterleavingPolicy
+      summary: Declare or replace a site's interleaving policy
+      description: |
+        Declares the interleaving policy of a site, or replaces it with a new
+        version. Until a site has a policy no hint is issued for it. Validation:
+        `maxDetourM` greater than 0, `maxCandidates` 1 to 5, `hintTtlSeconds`
+        greater than 0, `eligibleTaskTypes` non-empty and a subset of `PICK`,
+        `PACK`, `REBIN`, `SLAM`, `RELOCATE`, `REPLENISH`, `verticalWeight` at
+        least 0 (default 1). The first declaration sends no `If-Match`; once a
+        policy exists, `If-Match` must carry its current version. A stale or
+        missing `If-Match` on an existing policy is a 412 `version-mismatch`.
+        Declaring the same values again still advances the version.
+      tags: [Policy]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeclarePolicyRequest"
+            example:
+              maxDetourM: 25
+              maxCandidates: 3
+              hintTtlSeconds: 90
+              eligibleTaskTypes: [PICK, REPLENISH]
+              verticalWeight: 1.5
+      responses:
+        "200":
+          description: The policy is declared at its new version.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+              example:
+                siteId: SITE-1
+                maxDetourM: 25
+                maxCandidates: 3
+                hintTtlSeconds: 90
+                eligibleTaskTypes: [PICK, REPLENISH]
+                verticalWeight: 1.5
+                version: 2
+                declaredAt: "2026-10-17T12:00:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/ConcurrentModification"
+        "412":
+          $ref: "#/components/responses/VersionMismatch"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: getInterleavingPolicy
+      summary: Get a site's interleaving policy
+      description: |
+        Returns the current policy of the site with its `version` (also as the
+        `ETag`). A site that never declared one is a 404 `policy-not-found`: it is
+        inert and issues no hints.
+      tags: [Policy]
+      responses:
+        "200":
+          description: The policy.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/PolicyNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /hints:
+    get:
+      operationId: listHints
+      summary: List interleaving hints
+      description: |
+        Lists hints newest first, a page at a time. `cursor` is the opaque
+        `nextCursor` of the previous page; a response without `nextCursor` is the
+        last page. Optional filters narrow by station, site and state.
+      tags: [Hints]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: stationId
+          in: query
+          description: Only hints issued to this station.
+          schema:
+            type: string
+            pattern: '\S'
+        - name: siteId
+          in: query
+          description: Only hints of this site.
+          schema:
+            type: string
+            pattern: '\S'
+        - name: state
+          in: query
+          description: Only hints in this state.
+          schema:
+            $ref: "#/components/schemas/HintState"
+      responses:
+        "200":
+          description: One page of hints.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HintPage"
+              example:
+                items:
+                  - hintId: hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                    stationId: STN-07
+                    siteId: SITE-1
+                    state: Active
+                    afterTaskId: task-8a1f
+                    originLocation: WH1-FWD-A01-01-01-A
+                    issuedAt: "2026-10-17T12:00:00Z"
+                    expiresAt: "2026-10-17T12:01:30Z"
+                    policyVersion: 2
+                    candidates:
+                      - { rank: 1, taskId: task-9c2e, taskType: PICK, location: WH1-FWD-A01-02-01-A, detourM: 4.5 }
+                    version: 1
+                nextCursor: aGludC0z
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /hints/{hintId}:
+    parameters:
+      - $ref: "#/components/parameters/HintId"
+    get:
+      operationId: getHint
+      summary: Get an interleaving hint
+      description: |
+        Returns the hint with its ranked candidates and its outcome: `Active`
+        until a claim of one of its candidates by the hinted station marks it
+        `Consumed`, the clock marks it `Expired`, or a newer completion at the
+        same station marks it `Superseded`.
+      tags: [Hints]
+      responses:
+        "200":
+          description: The hint.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hint"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/HintNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /stations/{stationId}:
+    parameters:
+      - $ref: "#/components/parameters/StationId"
+    get:
+      operationId: getStation
+      summary: Get a station's position and active hint
+      description: |
+        Returns what the context knows about the station: its position (the end
+        location of the last task it completed), the last completed task and the
+        Active hint, if any. A station that has completed no task since this
+        context started listening is a 404 `station-not-found`.
+      tags: [Stations]
+      responses:
+        "200":
+          description: The station.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Station"
+              example:
+                stationId: STN-07
+                siteId: SITE-1
+                position:
+                  location: WH1-FWD-A01-01-01-A
+                  point: { xM: 4.2, yM: 10.5, zM: 0.4 }
+                lastCompletedTaskId: task-8a1f
+                lastCompletedAt: "2026-10-17T12:00:00Z"
+                activeHint:
+                  hintId: hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+                  state: Active
+                  issuedAt: "2026-10-17T12:00:00Z"
+                  expiresAt: "2026-10-17T12:01:30Z"
+                  policyVersion: 2
+                  candidates:
+                    - { rank: 1, taskId: task-9c2e, taskType: PICK, location: WH1-FWD-A01-02-01-A, detourM: 4.5 }
+                version: 3
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/StationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /recommendations:
+    post:
+      operationId: recommendTasks
+      summary: Simulate the recommender for a station
+      description: |
+        A read-only simulation: runs the same pure recommender that issues hints
+        against the current open-task pool and the site's policy, and returns the
+        ranked candidates. It issues no hint, publishes no event and changes no
+        state. The origin is the station's recorded position, or `fromLocation`
+        when given (a what-if). The site is the station's site, or the site of
+        `fromLocation`. An empty `candidates` list means no hint would be issued.
+        The site must have a declared policy (422 `policy-not-declared`
+        otherwise) and the origin must have known geometry (422
+        `origin-unknown`). Accepts an `Idempotency-Key` like every POST.
+      tags: [Recommendations]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecommendationRequest"
+            example:
+              stationId: STN-07
+              fromLocation: WH1-FWD-A01-01-01-A
+      responses:
+        "200":
+          description: The ranked candidates; possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recommendation"
+              example:
+                stationId: STN-07
+                siteId: SITE-1
+                originLocation: WH1-FWD-A01-01-01-A
+                policyVersion: 2
+                candidates:
+                  - { rank: 1, taskId: task-9c2e, taskType: PICK, location: WH1-FWD-A01-02-01-A, detourM: 4.5 }
+                  - { rank: 2, taskId: task-9d10, taskType: REPLENISH, location: WH1-FWD-A02-01-01-A, detourM: 12.0 }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      description: 200 while the process is running.
+      tags: [Health]
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness probe
+      description: 200 when the service can serve traffic; 503 while starting or draining for shutdown.
+      tags: [Health]
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "503":
+          description: Not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+
+components:
+  headers:
+    ETag:
+      description: 'Strong entity tag of the resource: the quoted `version`, for example `"3"`.'
+      schema:
+        type: string
+        example: '"3"'
+
+  parameters:
+    SiteId:
+      name: siteId
+      in: path
+      required: true
+      description: The site (the fleet's site code), 1 to 64 characters without whitespace or `/`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: "^[^\\s/]+$"
+      example: SITE-1
+    StationId:
+      name: stationId
+      in: path
+      required: true
+      description: The station id, 1 to 64 characters without whitespace or `/`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: "^[^\\s/]+$"
+      example: STN-07
+    HintId:
+      name: hintId
+      in: path
+      required: true
+      description: The hint id (`hint-` followed by a unique suffix, at most 64 characters).
+      schema:
+        type: string
+        minLength: 6
+        maxLength: 64
+        pattern: "^hint-[^\\s/]+$"
+      example: hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+    Limit:
+      name: limit
+      in: query
+      description: Page size, 1 to 500 (default 100).
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      description: The `nextCursor` value from the previous page.
+      schema:
+        type: string
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        The `ETag` the caller last saw. Omitted only for the first declaration;
+        for an existing policy a missing or stale value is refused with 412
+        `version-mismatch`.
+      schema:
+        type: string
+      example: '"2"'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Caller-generated unique key (a UUID per logical submit) that makes a
+        retried request safe. Required whenever the service runs with Postgres,
+        that is in every deployment, and answered with 400
+        `idempotency-key-required` when absent; a replay with the same key and
+        the same body returns the original response, while the same key with a
+        different body is 422 `idempotency-key-reused`. The in-memory development
+        mode (no `DATABASE_URL`) does not enforce it, which is why the header is
+        not marked `required` here.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: Malformed JSON body, an unknown field, an invalid policy value, or an invalid path or query parameter.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            malformedBody:
+              summary: Malformed JSON body or unknown field
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/malformed-request
+                title: Malformed request
+                status: 400
+                detail: request body is not valid JSON for this operation
+                instance: /recommendations
+            invalidSite:
+              summary: Invalid site id
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-site-id
+                title: Site id is invalid
+                status: 400
+                detail: "siteId must be 1..64 characters without whitespace, control characters or '/'"
+                instance: /sites/bad%20site/policy
+            invalidStation:
+              summary: Invalid station id
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-station-id
+                title: Station id is invalid
+                status: 400
+                detail: "stationId must be 1..64 characters without whitespace, control characters or '/'"
+                instance: /stations/bad%20station
+            invalidHintId:
+              summary: Invalid hint id
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-hint-id
+                title: Hint id is invalid
+                status: 400
+                detail: "hint id must start with hint- and have no whitespace, control characters or '/'"
+                instance: /hints/nope
+            invalidPolicy:
+              summary: Policy values out of range
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-policy
+                title: Policy is invalid
+                status: 400
+                detail: maxCandidates must be between 1 and 5
+                instance: /sites/SITE-1/policy
+            invalidTaskType:
+              summary: Unknown or empty eligible task types
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-task-type
+                title: Eligible task types are invalid
+                status: 400
+                detail: "eligibleTaskTypes must be a non-empty subset of PICK, PACK, REBIN, SLAM, RELOCATE, REPLENISH"
+                instance: /sites/SITE-1/policy
+            invalidCursor:
+              summary: Invalid cursor
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-cursor
+                title: Cursor is invalid
+                status: 400
+                detail: cursor is not a value returned by this API
+                instance: /hints
+            invalidLimit:
+              summary: Invalid limit
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-limit
+                title: Limit is invalid
+                status: 400
+                detail: limit must be between 1 and 500
+                instance: /hints
+            invalidState:
+              summary: Unknown hint state filter
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/invalid-state
+                title: State is invalid
+                status: 400
+                detail: "state must be one of Active, Consumed, Expired, Superseded"
+                instance: /hints
+            idempotencyKeyRequired:
+              summary: Missing Idempotency-Key
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/idempotency-key-required
+                title: Idempotency-Key header is required
+                status: 400
+                detail: send an Idempotency-Key header with a unique value per logical request
+                instance: /recommendations
+    Unprocessable:
+      description: |
+        The request is well-formed but cannot be simulated: `policy-not-declared`
+        (the site is inert), `origin-unknown` (the origin has no known geometry),
+        `station-position-unknown` (no `fromLocation` and no recorded position),
+        or an `Idempotency-Key` reused with a different body
+        (`idempotency-key-reused`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            policyNotDeclared:
+              summary: The site has no interleaving policy
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/policy-not-declared
+                title: The site has no interleaving policy
+                status: 422
+                detail: declare a policy with PUT /sites/{siteId}/policy before simulating
+                instance: /recommendations
+            originUnknown:
+              summary: The origin has no known geometry
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/origin-unknown
+                title: The origin location has no known geometry
+                status: 422
+                detail: no geometry is known for location WH1-FWD-A01-01-01-A
+                instance: /recommendations
+            stationPositionUnknown:
+              summary: No fromLocation and no recorded position
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/station-position-unknown
+                title: The station position is unknown
+                status: 422
+                detail: the station has no recorded position; send fromLocation
+                instance: /recommendations
+            idempotencyKeyReused:
+              summary: The key was used with a different body
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 422
+                detail: the Idempotency-Key was used with a different request body
+                instance: /recommendations
+    PolicyNotFound:
+      description: The site has no interleaving policy (it is inert).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.task-interleaving.warehouse-systems.dev/policy-not-found
+            title: Interleaving policy not found
+            status: 404
+            detail: the site has not declared an interleaving policy
+            instance: /sites/SITE-1/policy
+    HintNotFound:
+      description: No hint has this id.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.task-interleaving.warehouse-systems.dev/hint-not-found
+            title: Hint not found
+            status: 404
+            detail: interleaving hint not found
+            instance: /hints/hint-unknown
+    StationNotFound:
+      description: The context has recorded no completion for this station.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.task-interleaving.warehouse-systems.dev/station-not-found
+            title: Station not found
+            status: 404
+            detail: no completion has been recorded for the station
+            instance: /stations/STN-99
+    VersionMismatch:
+      description: The `If-Match` value is missing or does not match the policy's current version; re-fetch and retry.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.task-interleaving.warehouse-systems.dev/version-mismatch
+            title: The If-Match version is stale
+            status: 412
+            detail: if-match does not match the current version
+            instance: /sites/SITE-1/policy
+    ConcurrentModification:
+      description: Another request changed the policy first.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.task-interleaving.warehouse-systems.dev/concurrent-modification
+            title: The resource was modified by another request; re-fetch the latest version and retry
+            status: 409
+            detail: concurrent modification
+            instance: /sites/SITE-1/policy
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.task-interleaving.warehouse-systems.dev/internal-error
+            title: Internal server error
+            status: 500
+            detail: an unexpected error occurred
+            instance: /hints
+
+  schemas:
+    TaskType:
+      type: string
+      description: A task type an interleaving hint may point at.
+      enum: [PICK, PACK, REBIN, SLAM, RELOCATE, REPLENISH]
+    HintState:
+      type: string
+      description: |
+        Lifecycle state of a hint. `Active` moves to exactly one terminal state:
+        `Consumed` (a candidate was claimed by the hinted station), `Expired`
+        (`expiresAt` passed) or `Superseded` (a newer completion at the station
+        issued a newer hint, or cleared it).
+      enum: [Active, Consumed, Expired, Superseded]
+
+    DeclarePolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [maxDetourM, maxCandidates, hintTtlSeconds, eligibleTaskTypes]
+      properties:
+        maxDetourM:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Largest detour, in metres, a candidate may have. Greater than 0.
+        maxCandidates:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 5
+          description: How many candidates a hint lists at most.
+        hintTtlSeconds:
+          type: integer
+          format: int32
+          minimum: 1
+          description: How long a hint stays valid, in seconds. Greater than 0.
+        eligibleTaskTypes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: The task types a hint may point at. Non-empty.
+          items:
+            $ref: "#/components/schemas/TaskType"
+        verticalWeight:
+          type: number
+          format: double
+          minimum: 0
+          default: 1
+          description: Weight of the vertical distance in the rectilinear travel model. At least 0.
+    Policy:
+      type: object
+      required: [siteId, maxDetourM, maxCandidates, hintTtlSeconds, eligibleTaskTypes, verticalWeight, version, declaredAt]
+      properties:
+        siteId: { type: string, example: SITE-1 }
+        maxDetourM: { type: number, format: double }
+        maxCandidates: { type: integer, format: int32 }
+        hintTtlSeconds: { type: integer, format: int32 }
+        eligibleTaskTypes:
+          type: array
+          items: { $ref: "#/components/schemas/TaskType" }
+        verticalWeight: { type: number, format: double }
+        version: { type: integer, format: int64, description: "Starts at 1, +1 per declaration." }
+        declaredAt: { type: string, format: date-time }
+
+    Point:
+      type: object
+      description: A position in the site's local coordinate frame, in metres (facility-layout geometry).
+      required: [xM, yM, zM]
+      properties:
+        xM: { type: number, format: double }
+        yM: { type: number, format: double }
+        zM: { type: number, format: double, description: Height above floor level. }
+    Position:
+      type: object
+      description: Where a station is, as the end location of the last task it completed.
+      required: [location]
+      properties:
+        location: { type: string, description: The facility-layout location code. }
+        point:
+          $ref: "#/components/schemas/Point"
+    Candidate:
+      type: object
+      required: [rank, taskId, taskType, location, detourM]
+      properties:
+        rank: { type: integer, format: int32, minimum: 1, description: "1 is the closest; ranked by detourM, then taskId." }
+        taskId: { type: string }
+        taskType: { $ref: "#/components/schemas/TaskType" }
+        location: { type: string, description: The location the operator must go to first. }
+        detourM: { type: number, format: double, minimum: 0, description: "Rectilinear detour in metres, rounded to 0.1 m." }
+    Hint:
+      type: object
+      required: [hintId, stationId, siteId, state, afterTaskId, originLocation, issuedAt, expiresAt, policyVersion, candidates, version]
+      properties:
+        hintId: { type: string, example: hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07 }
+        stationId: { type: string }
+        siteId: { type: string }
+        state: { $ref: "#/components/schemas/HintState" }
+        afterTaskId: { type: string, description: The completed task this hint follows. }
+        originLocation: { type: string, description: Where the station stood when the hint was issued. }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: "issuedAt + the policy's hintTtlSeconds." }
+        policyVersion: { type: integer, format: int64, description: The policy version the hint was computed with. }
+        candidates:
+          type: array
+          minItems: 1
+          description: In rank order.
+          items: { $ref: "#/components/schemas/Candidate" }
+        consumedTaskId: { type: string, description: The candidate that was claimed; present only when Consumed. }
+        consumedAt: { type: string, format: date-time }
+        supersededAt: { type: string, format: date-time }
+        version: { type: integer, format: int64, description: "Starts at 1, +1 per accepted transition." }
+    HintPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Hint" }
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    ActiveHint:
+      type: object
+      description: The Active hint of a station.
+      required: [hintId, state, issuedAt, expiresAt, policyVersion, candidates]
+      properties:
+        hintId: { type: string }
+        state: { $ref: "#/components/schemas/HintState" }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        policyVersion: { type: integer, format: int64 }
+        candidates:
+          type: array
+          items: { $ref: "#/components/schemas/Candidate" }
+    Station:
+      type: object
+      required: [stationId, siteId, position, lastCompletedTaskId, lastCompletedAt, version]
+      properties:
+        stationId: { type: string }
+        siteId: { type: string }
+        position: { $ref: "#/components/schemas/Position" }
+        lastCompletedTaskId: { type: string }
+        lastCompletedAt: { type: string, format: date-time }
+        activeHint: { $ref: "#/components/schemas/ActiveHint" }
+        version: { type: integer, format: int64, description: "Starts at 1, +1 per accepted change." }
+
+    RecommendationRequest:
+      type: object
+      additionalProperties: false
+      required: [stationId]
+      properties:
+        stationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '\S'
+          description: The station to simulate for.
+        fromLocation:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '\S'
+          description: A what-if origin location code; defaults to the station's recorded position.
+    Recommendation:
+      type: object
+      required: [stationId, siteId, originLocation, policyVersion, candidates]
+      properties:
+        stationId: { type: string }
+        siteId: { type: string }
+        originLocation: { type: string }
+        policyVersion: { type: integer, format: int64 }
+        candidates:
+          type: array
+          description: In rank order; empty when no hint would be issued.
+          items: { $ref: "#/components/schemas/Candidate" }
+
+    Problem:
+      type: object
+      description: RFC 7807 problem document used for every non-2xx response.
+      required: [type, title, status, detail]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, format: int32 }
+        detail: { type: string }
+        instance: { type: string }
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, example: ok }

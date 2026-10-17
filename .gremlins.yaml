@@ -27,5 +27,8 @@ unleash:
     # differs. See HARNESS.md's mutation-testing section for the
     # tagless-switch-under-reports pitfall before assuming a low number
     # means missing tests.
-    efficacy: 0
-    mutant-coverage: 0
+    # Measured 2026-10-17 on task-interleaving's four domain packages
+    # (stationtrip, recommend, travel, policy): efficacy 100% and mutator
+    # coverage 100% in each, 0 lived mutants. Thresholds sit strictly below.
+    efficacy: 90
+    mutant-coverage: 90
