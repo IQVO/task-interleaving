@@ -132,7 +132,7 @@ struct locally and add the consumed type to the table in
 its `origin/develop` (`git show origin/develop:apis/asyncapi.yaml` in the
 sibling checkout). ADR 0003 lists what is consumed today:
 fulfillment-execution's `TaskAvailable`, `TaskClaimed` and `TaskCompleted`
-(`TaskAvailable` for RELOCATE tasks only), and facility-layout's `ZoneRegistered`,
+(`TaskAvailable` for RELOCATE and REPLENISH tasks only), and facility-layout's `ZoneRegistered`,
 `LocationSlotRegistered`, `LocationSlotDecommissioned`,
 `LocationGeometryUpdated`.
 

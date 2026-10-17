@@ -34,7 +34,7 @@ check a design decision against this fleet's standing architecture.
 3. **Local-copy contract, per `docs/adr/0003-local-copies-and-consumed-contracts.md`.**
    Consumed types must match the producers' `apis/asyncapi.yaml` byte-for-byte
    and stay in the ADR 0003 and ADR 0004 tables; `TaskAvailable` and
-   `TaskClaimed` are published by fulfillment-execution (`TaskAvailable` for RELOCATE tasks only); verify against its `apis/asyncapi.yaml` on `origin/develop` before relying on any other task type.
+   `TaskClaimed` are published by fulfillment-execution (`TaskAvailable` for RELOCATE and REPLENISH tasks only); verify against its `apis/asyncapi.yaml` on `origin/develop` before relying on any other task type.
    Copies converge from events only, with the `*_MODE` switches defaulting to
    `permissive`.
 4. **MCP additive-boundary rule (fleet-wide).** A change in an MCP inbound
