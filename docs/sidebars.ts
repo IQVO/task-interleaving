@@ -10,11 +10,6 @@ import apiSidebar from './docs/api-reference/rest/sidebar';
  * Reference, Ecosystem and Architecture Decision Records. The ADR files live
  * in docs/adr/ and are served by the second docs plugin instance (id: 'adr'),
  * hence the plain links.
- *
- * The Operations category (configuration, runbook, observability,
- * troubleshooting) is deliberately absent: develop has no cmd/, no
- * migrations and no HTTP or Kafka adapters yet, so there is nothing to
- * ground those pages in. Add the category when the service lands.
  */
 const sidebars: SidebarsConfig = {
   docsSidebar: [
@@ -24,6 +19,16 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       link: {type: 'doc', id: 'overview/introduction'},
       items: ['overview/architecture', 'overview/quickstart'],
+    },
+    {
+      type: 'category',
+      label: 'Operations',
+      items: [
+        'operations/configuration',
+        'operations/runbook',
+        'operations/observability',
+        'operations/troubleshooting',
+      ],
     },
     {
       type: 'category',
@@ -95,6 +100,11 @@ const sidebars: SidebarsConfig = {
           type: 'link',
           label: '0004 CloudEvents envelope and type catalogue',
           href: '/docs/adr/0004-cloudevents-envelope-and-type-catalogue',
+        },
+        {
+          type: 'link',
+          label: '0005 Persistence and evaluation semantics',
+          href: '/docs/adr/0005-persistence-and-evaluation-semantics',
         },
       ],
     },
