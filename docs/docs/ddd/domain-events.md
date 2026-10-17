@@ -45,7 +45,7 @@ Kafka key as below, Kafka header `content-type: application/cloudevents+json; ch
 
 | Full `type` | Topic(s) | `subject` and key | Consumers |
 | --- | --- | --- | --- |
-| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | `warehouse.task-interleaving.events`, `warehouse.task-interleaving.analytics` | station id | none built: fulfillment-execution's `origin/develop` has no consumer (its ADR 0049 lists consuming it as out of scope) |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | `warehouse.task-interleaving.events`, `warehouse.task-interleaving.analytics` | station id | none built: fulfillment-execution's `origin/develop` has no consumer (its ADR 0049 and ADR 0050 list consuming it as out of scope) |
 | `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintConsumed` | `warehouse.task-interleaving.analytics` | station id | none built (ADR 0004: "a later phase") |
 | `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintExpired` | `warehouse.task-interleaving.analytics` | station id | none built |
 | `com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared` | `warehouse.task-interleaving.analytics` | site id | none built |
@@ -82,7 +82,7 @@ The integration and analytics rows of one occurrence share `type` and `id`; only
 
 | Full `type` | Topic | Key | Fields used | Producer status |
 | --- | --- | --- | --- | --- |
-| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | task id | `task_id, task_type, site_id, from_location, to_location, required_capabilities[], priority_band` (`cpt` and `available_at` are ignored) | published since fulfillment-execution's ADR 0049, **RELOCATE tasks only** |
+| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | task id | `task_id, task_type, site_id, from_location, to_location, required_capabilities[], priority_band` (`cpt` and `available_at` are ignored) | published since fulfillment-execution's ADR 0049, for **RELOCATE and REPLENISH tasks** (REPLENISH added by its ADR 0050; PICK, PACK, SLAM and REBIN are not announced) |
 | `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | task id | `task_id, task_type, station_id, claimed_at` | published on the integration topic for every task type, with `claimed_at` (the analytics-topic row is separate) |
 | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | task id | `task_id, station_id` (the producer requires `task_id, station_id, work_unit_id`) | verified |
 | `com.warehouse.wms.facility-layout.zone.ZoneRegistered` | `warehouse.facility.events` | `zoneId` | `zoneId, siteCode, zoneCode` | verified |
