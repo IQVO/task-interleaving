@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,18 +26,23 @@ const hintColumns = `hint_id, station_id, site_id, after_task_id, origin_locatio
 // supersedes the station's Active one and is inserted with its candidates.
 func recordHint(ctx context.Context, q querier, snap stationtrip.Snapshot) error {
 	h := *snap.Hint
-	moved, err := moveHint(ctx, q, h)
+	moved, err := moveHint(ctx, q, snap.ID, h)
 	if err != nil || moved {
 		return err
 	}
-	var known bool
-	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM hints WHERE hint_id = $1)`, string(h.ID)).Scan(&known); err != nil {
+	var owner string
+	err = q.QueryRow(ctx, `SELECT station_id FROM hints WHERE hint_id = $1`, string(h.ID)).Scan(&owner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return insertHint(ctx, q, snap)
+	}
+	if err != nil {
 		return fmt.Errorf("check hint %s: %w", h.ID, err)
 	}
-	if known {
-		return nil
+	if owner != string(snap.ID) {
+		// the id is another station's hint: a clash, not a known hint
+		return repository.ErrConcurrentModification
 	}
-	return insertHint(ctx, q, snap)
+	return nil
 }
 
 // consumption returns the consumed task and instant of a Consumed hint, nil
@@ -52,13 +58,13 @@ func consumption(h stationtrip.Hint) (*string, *time.Time) {
 // moveHint applies a state change of a hint already in the history (version +
 // 1) and reports whether the hint changed. The consumed task and instant are
 // set exactly when the hint is Consumed.
-func moveHint(ctx context.Context, q querier, h stationtrip.Hint) (bool, error) {
+func moveHint(ctx context.Context, q querier, station stationtrip.StationID, h stationtrip.Hint) (bool, error) {
 	task, at := consumption(h)
 	tag, err := q.Exec(ctx, `
 		UPDATE hints
 		SET state = $2, consumed_task_id = $3, consumed_at = $4, version = version + 1, updated_at = now()
-		WHERE hint_id = $1 AND state <> $2
-	`, string(h.ID), string(h.State), task, at)
+		WHERE hint_id = $1 AND state <> $2 AND station_id = $5
+	`, string(h.ID), string(h.State), task, at, string(station))
 	if err != nil {
 		return false, fmt.Errorf("move hint %s: %w", h.ID, err)
 	}

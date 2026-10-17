@@ -36,6 +36,7 @@ func StationTripRepo(t *testing.T, newRepo func(t *testing.T) ports.StationTripR
 		"hints list newest first and page by cursor":         hintListPaging,
 		"hints list narrows by station, site and state":      hintListFilters,
 		"the history keeps every hint of a busy station":     hintHistoryDepth,
+		"a hint id taken by another station is a conflict":   hintIDClash,
 	}
 	for name, fn := range cases {
 		t.Run(name, func(t *testing.T) { fn(t, newRepo(t)) })
@@ -384,5 +385,27 @@ func hintHistoryDepth(t *testing.T, r ports.StationTripRepo) {
 	must(t, err)
 	if h, _ := got.Hint(); h.ID != "hint-4" || h.State != stationtrip.StateActive {
 		t.Fatalf("current hint = %+v", h)
+	}
+}
+
+// hintIDClash: a hint id belongs to one station for good. A save that brings
+// another station's id is a lost race (ids are unique per hint), and the save
+// leaves nothing behind: not the trip update, not the supersede.
+func hintIDClash(t *testing.T, r ports.StationTripRepo) {
+	saved(t, r, Hinted(t, "STN-1", "hint-1", T0), 0)
+	other := Hinted(t, "STN-2", "hint-2", T0)
+	saved(t, r, other, 0)
+	loaded := other.Version()
+	completeAndIssue(t, other, "task-1", "hint-1", T0.Add(time.Minute))
+	wantErr(t, r.Save(bg, other, loaded), repository.ErrConcurrentModification)
+	got, err := r.Get(bg, "STN-2")
+	must(t, err)
+	if h, _ := got.Hint(); got.Version() != loaded || h.ID != "hint-2" || h.State != stationtrip.StateActive {
+		t.Fatalf("the failed save left a trace: version %d, hint %+v", got.Version(), h)
+	}
+	rec, err := r.GetHint(bg, "hint-1")
+	must(t, err)
+	if rec.StationID != "STN-1" || rec.Hint.State != stationtrip.StateActive || rec.Version != 1 {
+		t.Fatalf("hint-1 = %+v", rec)
 	}
 }

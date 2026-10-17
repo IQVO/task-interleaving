@@ -53,6 +53,11 @@ func (r *StationTripRepo) Save(_ context.Context, trip *stationtrip.StationTrip,
 	if loadedVersion != 0 && (!exists || cur.Version != loadedVersion) {
 		return repository.ErrConcurrentModification
 	}
+	if snap.Hint != nil {
+		if known, taken := r.hints[snap.Hint.ID]; taken && known.StationID != snap.ID {
+			return repository.ErrConcurrentModification
+		}
+	}
 	r.trips[snap.ID] = snap
 	if snap.Hint != nil {
 		r.recordHint(snap)
