@@ -21,6 +21,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -67,6 +68,13 @@ func defaultLogger(logger *slog.Logger) *slog.Logger {
 		return slog.Default()
 	}
 	return logger
+}
+
+// readerErrorLogger adapts logger to kafka-go's ErrorLogger.
+func readerErrorLogger(logger *slog.Logger, consumer, topic string) kafkago.LoggerFunc {
+	return func(format string, args ...any) {
+		logger.Error("kafka reader error; retrying", "consumer", consumer, "topic", topic, "detail", fmt.Sprintf(format, args...))
+	}
 }
 
 // RetryPolicy is the capped exponential backoff the run loop applies while

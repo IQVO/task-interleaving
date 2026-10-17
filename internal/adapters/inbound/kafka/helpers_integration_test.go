@@ -14,8 +14,8 @@ import (
 
 	kafkaconsumer "github.com/claudioed/task-interleaving/internal/adapters/inbound/kafka"
 	"github.com/claudioed/task-interleaving/internal/adapters/outbound/events"
-	"github.com/claudioed/task-interleaving/internal/adapters/outbound/memory"
 	"github.com/claudioed/task-interleaving/internal/adapters/outbound/postgres"
+	"github.com/claudioed/task-interleaving/internal/adapters/outbound/system"
 	"github.com/claudioed/task-interleaving/internal/application/repository"
 	"github.com/claudioed/task-interleaving/internal/application/usecases"
 	"github.com/claudioed/task-interleaving/internal/domain/policy"
@@ -74,10 +74,10 @@ func (w *pgWorld) fulfillmentUseCases() kafkaconsumer.FulfillmentUseCases {
 	writer := usecases.TripWriter{Trips: w.trips, Events: w.events}
 	return kafkaconsumer.FulfillmentUseCases{
 		Available: &usecases.ApplyTaskAvailable{Intake: w.intake(), Pool: w.pool},
-		Claimed:   &usecases.ApplyTaskClaimed{Intake: w.intake(), TripWriter: writer, Pool: w.pool, Clock: memory.SystemClock{}},
+		Claimed:   &usecases.ApplyTaskClaimed{Intake: w.intake(), TripWriter: writer, Pool: w.pool, Clock: system.Clock{}},
 		Completed: &usecases.ApplyTaskCompleted{
 			Intake: w.intake(), TripWriter: writer, Policies: w.policies, Pool: w.pool,
-			Ranker: usecases.Ranker{Pool: w.pool, Book: w.book}, Clock: memory.SystemClock{}, IDs: memory.RandomIDs{},
+			Ranker: usecases.Ranker{Pool: w.pool, Book: w.book}, Clock: system.Clock{}, IDs: system.RandomIDs{},
 		},
 	}
 }

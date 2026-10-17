@@ -3,7 +3,6 @@ package memory_test
 import (
 	"context"
 	"errors"
-	"regexp"
 	"testing"
 	"time"
 
@@ -410,21 +409,5 @@ func TestEventLogRecordsInOrderAndRollsBack(t *testing.T) {
 	restore()
 	if len(log.Names()) != 0 || len(log.TripEvents()) != 0 || len(log.Declarations()) != 0 {
 		t.Fatal("restore did not forget the facts")
-	}
-}
-
-func TestSystemClockAndIDs(t *testing.T) {
-	if (memory.SystemClock{}).Now().Location() != time.UTC {
-		t.Fatal("clock is not UTC")
-	}
-	id := memory.RandomIDs{}.NewHintID()
-	if !regexp.MustCompile(`^hint-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(id) {
-		t.Fatalf("id = %q", id)
-	}
-	if _, err := stationtrip.NewHintID(id); err != nil {
-		t.Fatalf("id is not a valid hint id: %v", err)
-	}
-	if id == (memory.RandomIDs{}).NewHintID() {
-		t.Fatal("ids repeat")
 	}
 }

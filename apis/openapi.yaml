@@ -333,7 +333,7 @@ paths:
     get:
       operationId: readyz
       summary: Readiness probe
-      description: 200 when the service can serve traffic; 503 while starting or draining for shutdown.
+      description: 200 when the service can serve traffic. 503 while draining for shutdown (`{"status":"not_ready"}`) or while Postgres or the Kafka brokers/topics are unreachable (problem `dependency-unavailable`). The dependency verdict is cached for a few seconds.
       tags: [Health]
       responses:
         "200":
@@ -348,6 +348,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Status"
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.task-interleaving.warehouse-systems.dev/dependency-unavailable
+                title: A runtime dependency is unavailable
+                status: 503
+                detail: "not ready: kafka"
+                instance: /readyz
 
 components:
   headers:
@@ -421,16 +430,14 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: false
+      required: true
       description: |
         Caller-generated unique key (a UUID per logical submit) that makes a
-        retried request safe. Required whenever the service runs with Postgres,
-        that is in every deployment, and answered with 400
+        retried request safe. The service always runs on Postgres, so it is
+        required on every deployment and answered with 400
         `idempotency-key-required` when absent; a replay with the same key and
         the same body returns the original response, while the same key with a
-        different body is 422 `idempotency-key-reused`. The in-memory development
-        mode (no `DATABASE_URL`) does not enforce it, which is why the header is
-        not marked `required` here.
+        different body is 422 `idempotency-key-reused`.
       schema:
         type: string
         minLength: 1
