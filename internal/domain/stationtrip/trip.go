@@ -265,10 +265,8 @@ func validateCandidate(c recommend.Candidate, index int, p policy.Policy) error 
 
 // rankedBefore reports whether a sorts strictly before b by detour, then task id.
 func rankedBefore(a, b recommend.Candidate) bool {
-	if c := cmp.Compare(a.DetourM, b.DetourM); c != 0 {
-		return c < 0
-	}
-	return a.TaskID < b.TaskID
+	// cmp.Compare yields exactly -1, 0 or +1, so "== -1" is "a sorts first".
+	return cmp.Or(cmp.Compare(a.DetourM, b.DetourM), cmp.Compare(a.TaskID, b.TaskID)) == -1
 }
 
 func findCandidate(cs []recommend.Candidate, task recommend.TaskID) (recommend.Candidate, bool) {

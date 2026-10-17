@@ -92,9 +92,7 @@ func Recommend(in Input) ([]Candidate, error) {
 	}
 	slices.SortFunc(found, byDetourThenID)
 	found = distinct(found)
-	if len(found) > in.Policy.MaxCandidates() {
-		found = found[:in.Policy.MaxCandidates()]
-	}
+	found = found[:min(len(found), in.Policy.MaxCandidates())]
 	for i := range found {
 		found[i].Rank = i + 1
 	}
