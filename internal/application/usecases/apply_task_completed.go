@@ -57,7 +57,7 @@ func (uc *ApplyTaskCompleted) Handle(ctx context.Context, eventID string, c Task
 			return "", fmt.Errorf("save task: %w", err)
 		}
 		station, err := stationtrip.NewStationID(task.ClaimedBy)
-		if err != nil || blank(task.ToLocation) {
+		if err != nil || blank(task.ToLocation) || blank(task.SiteID) {
 			return OutcomeIgnored, nil
 		}
 		return uc.record(ctx, station, task, c.At)
@@ -66,16 +66,9 @@ func (uc *ApplyTaskCompleted) Handle(ctx context.Context, eventID string, c Task
 
 // record puts the station at the end of the completed task and issues the hint.
 func (uc *ApplyTaskCompleted) record(ctx context.Context, station stationtrip.StationID, task repository.Task, at time.Time) (Outcome, error) {
-	place, bookSite, err := uc.Ranker.Origin(ctx, task.ToLocation, nil)
+	place, _, err := uc.Ranker.Origin(ctx, task.ToLocation, nil)
 	if err != nil {
 		return "", err
-	}
-	site := task.SiteID
-	if site == "" {
-		site = bookSite
-	}
-	if _, err := policy.NewSiteID(site); err != nil {
-		return OutcomeIgnored, nil
 	}
 	if at.IsZero() {
 		at = uc.Clock.Now()
@@ -84,7 +77,7 @@ func (uc *ApplyTaskCompleted) record(ctx context.Context, station stationtrip.St
 	if err != nil {
 		return "", err
 	}
-	pos := stationtrip.Position{Site: policy.SiteID(site), Place: place}
+	pos := stationtrip.Position{Site: policy.SiteID(task.SiteID), Place: place}
 	changed, err := trip.RecordCompletion(recommend.TaskID(task.ID), at, pos)
 	if err != nil {
 		return "", invalid(err)
