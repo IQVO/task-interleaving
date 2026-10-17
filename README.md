@@ -17,7 +17,7 @@ The service is on `develop` (merged in PR #7). One binary, `cmd/api`:
 - two Kafka consumers (`FULFILLMENT_MODE`, `LAYOUT_MODE`, always on; `permissive` is rejected at boot) with retry, a `<topic>.dlq` dead-letter topic and processed-event de-duplication;
 - `/readyz` that is ready only while Postgres answers and every topic the service consumes or produces has a Kafka leader.
 
-Not built: an MCP server, a Helm chart, a `Dockerfile`, OpenTelemetry metrics or traces, a `warehouse-infra` entry, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge.
+Packaged: a `Dockerfile` and a Helm chart (`charts/task-interleaving`) that render the Postgres + Kafka runtime. Not built: an MCP server, OpenTelemetry metrics or traces, a `warehouse-infra` entry, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge.
 
 ## Run it
 
@@ -43,6 +43,7 @@ Every variable is on [Configuration](docs/docs/operations/configuration.md); the
 
 ```text
 apis/                 openapi.yaml, asyncapi.yaml (the contracts)
+charts/task-interleaving/  Helm chart (values, templates, tests/), plus the root Dockerfile
 cmd/api/              the composition root (config, adapters, consumers, relay, topics)
 migrations/           embedded SQL migrations (0001_interleaving_schema)
 features/             godog scenarios (6 .feature files, 68 scenarios) and their runner and steps (package features_test); the repo root holds no .go file

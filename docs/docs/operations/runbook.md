@@ -14,27 +14,49 @@ symptoms in [Troubleshooting](/docs/operations/troubleshooting), signals in
 
 ## Deployment
 
-**This repository ships no deployment artefact for a cluster.** `git ls-files` on
-`develop` shows no `Dockerfile`, no `charts/` directory and no Kubernetes or
-Terraform manifest (the `docker-compose.yml` at the root only serves
-`make run-local`: a throwaway Postgres, Kafka and a job that creates the four
-topics; see the README note that it is not verified end to end). Consequently:
+**This repository ships a `Dockerfile`, a `.dockerignore` and the Helm chart
+`charts/task-interleaving`.** The chart deploys what
+[ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime) requires:
+the real Postgres and Kafka runtime, with no in-memory mode.
 
-- There is no Helm chart name, no Deployment, no Service, no HPA and no
-  probe configuration in this repo to describe. The probe endpoints below are
-  what such a manifest would point at.
-- `.github/workflows/ci.yml` already refers to the missing files:
-  `docker-publish` builds with `context: .` and pushes
-  `ghcr.io/iqvo/task-interleaving`, `release` packages `charts/task-interleaving`,
-  and `chart-tests` runs `charts/task-interleaving/tests/*`. The first two run
-  only on a push to `main` and would fail without a `Dockerfile` and a chart;
-  `chart-tests` finds no test and exits 0 with a warning.
+- **Image.** `docker build -t task-interleaving:local .` runs a digest-pinned
+  multi-stage build of every `cmd/*` binary (today `cmd/api` only) onto an
+  `alpine` runtime that runs as uid 1000 and writes nothing to disk, so the root
+  filesystem can be read-only. Run without configuration it exits 1 at boot with
+  the error that names `DATABASE_URL`, `KAFKA_BROKERS` and both consumer groups.
+- **Chart.** Required values (`helm template` fails with a message naming the
+  value otherwise): `database.url` (the chart creates a Secret) or
+  `database.existingSecret` (key `DATABASE_URL`, optional key
+  `MIGRATIONS_DATABASE_URL` for a direct non-pooled migration connection),
+  `kafka.brokers`, `config.fulfillmentConsumerGroup` and
+  `config.layoutConsumerGroup` (stable ids, defaulted in `values.yaml`).
+  Optional: `config.hintExpiryInterval`, `config.outboxMaxAttempts`,
+  `config.outboxRelayInterval`, `config.shutdownDrainDelay`, `config.httpAddr`,
+  `config.logLevel`. The `*_MODE` variables are never rendered and are refused
+  through `extraEnv`. Probes: startup and liveness on `/healthz`, readiness on
+  `/readyz` (5 s delay, 10 s period, 5 s timeout, 3 failures).
+  `terminationGracePeriodSeconds` is 60 and the chart refuses less than 55: the
+  binary stops its workers one after the other, each bounded by 10 s
+  (`SHUTDOWN_DRAIN_DELAY` 5 s + HTTP 10 s + two consumers + the expiry worker + the
+  relay).
+- **Gateway.** The HPA, the `HTTPRoute` (prefix `/api/task-interleaving`,
+  stripped before the service) and the Kong plugins (`cors` allowing
+  `Idempotency-Key`, `prometheus`, `opentelemetry`; never an auth plugin) are
+  off by default and switched on by values.
+- **Tests.** `charts/task-interleaving/tests/render_test.sh` (renders with the
+  mandatory values, asserts the `envFrom` mount, the probes, the hardening, no
+  `*_MODE`, the refusals, and that every variable `cmd/api` reads is rendered),
+  `test_service_selectors.py` and `test_kong_config.py` run in the `chart-tests`
+  CI job.
+- `.github/workflows/ci.yml`: `docker-publish` builds this `Dockerfile` and
+  pushes `ghcr.io/iqvo/task-interleaving`, `release` packages
+  `charts/task-interleaving`. Both run only on a push to `main`.
 - `warehouse-infra` (`origin/develop`, 2026-10-17) has no reference to
   `task-interleaving` in its Terraform, so no Kong route, ArgoCD application or
-  dashboard exists for it, and no values file sets the variables of
-  [Configuration](/docs/operations/configuration). The OpenAPI server list still
-  names `http://localhost:8080` and Kong's `/api/task-interleaving` as the
-  intended edge.
+  dashboard exists for it, and no values file of that repository sets the chart
+  values yet. The `docker-compose.yml` at the root only serves `make run-local`
+  (a throwaway Postgres, Kafka and a job that creates the four topics; see the
+  README note that it is not verified end to end).
 
 What you can run today is the binary: `go build -o task-interleaving ./cmd/api`
 (`make build` compiles it with the rest of the module). It listens on

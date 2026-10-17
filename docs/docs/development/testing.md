@@ -177,7 +177,7 @@ weekly (Monday 06:00 UTC, mutation and drift only) and on manual dispatch.
 | `drift` | deadcode, `go mod tidy -diff`, knip in `web/`, coverage-quality; advisory | schedule and dispatch only |
 | `api-lint` | Spectral on `apis/openapi.yaml` (`.spectral.yaml`) and `apis/asyncapi.yaml` (`.spectral.asyncapi.yaml`), `--fail-severity=warn` | always |
 | `vuln` | `govulncheck ./...` | always |
-| `chart-tests` | every `charts/task-interleaving/tests/*.sh` and `test_*.py`; with none it prints a warning and exits 0 | always |
+| `chart-tests` | every `charts/task-interleaving/tests/*.sh` and `test_*.py` (`render_test.sh`, `test_service_selectors.py`, `test_kong_config.py`); with none it prints a warning and exits 0 | always |
 | `arch-test` | `go test ./internal/architecture/... -v` | always |
 | `docker-publish` | build, push to `ghcr.io/iqvo/task-interleaving`, cosign signature, SBOM; needs the jobs above | push to `main` only |
 | `release` | tags the next patch version, retags the image, packages and pushes the Helm chart, creates the GitHub release | push to `main` only, after `docker-publish` |
@@ -197,10 +197,9 @@ conditions; that is expected, not a failure.
 These are mismatches between `ci.yml` and the tree, reported so nobody reads a green
 check as more than it is:
 
-- `docker-publish` builds with `context: .`, but there is no `Dockerfile`; the first
-  push to `main` would fail there.
-- `release` and `chart-tests` refer to `charts/task-interleaving`, which does not
-  exist (`chart-tests` therefore passes with a warning).
+- `ci.yml` has no `helm-lint` job (HARNESS.md lists it as a sensor for PRs into
+  `main`); `helm lint charts/task-interleaving` with `ci/default-values.yaml` and
+  `ci/all-components-values.yaml` is run by hand.
 - The `drift` job runs `npm ci` in `web/`, which does not exist.
 - `HARNESS.md` lists `docs-api-drift`, `helm-lint`, `trivy-scan` and CodeQL as
   sensors; none is in `ci.yml`. There is no job that regenerates the REST
