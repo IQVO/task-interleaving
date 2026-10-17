@@ -108,30 +108,64 @@ WARN and committed past.
 
 Effects: the fulfillment events feed the open-task pool (`TaskAvailable` upserts,
 `TaskClaimed` removes it from the open pool and may mark the station's hint
-Consumed, `TaskCompleted` closes the task and records the station position); the
-facility events feed location geometry and site mapping. Each effect and the
-CloudEvents `id` claim commit in ONE database transaction, then the offset is
-committed. A claim or completion for a task the pool never saw is counted and
-skipped, never dead-lettered.
+Consumed, `TaskCompleted` closes the task and records the station position at
+the task's `to_location`; the station is the payload's `station_id`, else the
+claimer of the pool copy); the facility events feed location geometry and site
+mapping. Each effect and the CloudEvents `id` claim commit in ONE database
+transaction, then the offset is committed. A claim of a task the pool never saw
+records a minimal task; a completion of one is recorded as completed and
+otherwise ignored; neither is ever dead-lettered.
 
-## Consumer group id
+**`TaskAvailable` and `TaskClaimed` await producer change P2.** fulfillment-execution
+does not publish them on `warehouse.fulfillment.events` yet; the consumer
+decodes them strictly from the contract pinned in ADR 0003 and
+`apis/asyncapi.yaml` and simply never sees them until P2 ships. Until then the
+open-task pool stays empty, so a completion finds no `to_location` to stand at:
+the task is recorded as completed and no position and no hint follow. A missing
+field never crashes the consumer: a payload the use case can never apply goes
+to the DLQ.
 
-The group ids come from the environment, never a string literal --
-`internal/architecture/fitness_test.go`'s
+## Consumers (`internal/adapters/inbound/kafka`, wired in `cmd/api/consumers.go`)
+
+Two opt-in consumers; the group ids come from the environment, never a string
+literal -- `internal/architecture/fitness_test.go`'s
 TestKafkaConsumerGroupNeverHardcodedInline enforces this (a real incident:
 wes-work-planning's hardcoded group id let a locally-run e2e-tests process
 silently collide with the live in-cluster Deployment's consumer group on
 the shared fleet Kafka broker).
 
-| Concern | Mode env | Consumer group env |
+| env | default | meaning |
 | --- | --- | --- |
-| Fulfillment (pool, claims, completions) | `FULFILLMENT_MODE` | `FULFILLMENT_CONSUMER_GROUP` |
-| Layout (zones, slots, geometry) | `LAYOUT_MODE` | `LAYOUT_CONSUMER_GROUP` |
+| `FULFILLMENT_MODE` | `permissive` | `kafka` starts the fulfillment consumer (`warehouse.fulfillment.events`); `permissive` starts none (the pool is whatever the database holds) |
+| `FULFILLMENT_CONSUMER_GROUP` | none | group id of the fulfillment consumer; required when `FULFILLMENT_MODE=kafka` |
+| `LAYOUT_MODE` | `permissive` | `kafka` starts the layout consumer (`warehouse.facility.events`) |
+| `LAYOUT_CONSUMER_GROUP` | none | group id of the layout consumer; required when `LAYOUT_MODE=kafka` |
+| `KAFKA_BROKERS` | none | comma-separated brokers; required by every consumer in `kafka` mode, and switches the outbox relay on |
+| `OUTBOX_MAX_ATTEMPTS` | `20` | outbox relay attempts per row (`0` = unlimited) |
 
-A mode is `kafka` or `permissive`; the default is `permissive` (no consumer
-starts, the local copy is whatever is in the database). Mode `kafka` with its
-group variable unset is a boot error. Both consumers are stable
-process-and-commit consumers (no full replay), so a stable group id is correct;
-if a consumer ever replays from FirstOffset on every start to build an in-memory
-read model, its group id must additionally be UNIQUE PER PROCESS INSTANCE
-(hostname+PID+timestamp). Outbox attempts: `OUTBOX_MAX_ATTEMPTS`.
+A mode is `kafka` or `permissive`. An unknown mode, `kafka` without its group
+variable, or `kafka` without `KAFKA_BROKERS` is a boot error, reported before
+the database is dialled. Both consumers are stable process-and-commit consumers
+(no full replay into memory), so a stable group id is correct; a new group
+starts at the first offset, so a fresh deployment replays each topic and the
+copies converge. If a consumer ever replays from FirstOffset on every start to
+build an in-memory read model, its group id must additionally be UNIQUE PER
+PROCESS INSTANCE (hostname+PID+timestamp).
+
+In-memory mode (no `DATABASE_URL`) can run the consumers, but its copies are
+lost on restart while the committed offsets are not: it logs a WARN and is for
+development only.
+
+Failure handling: each message is fetched, handled in ONE transaction together
+with its `processed_events` claim, and only then committed (`FetchMessage` +
+`CommitMessages`). A transient failure retries the same message with capped
+backoff (200ms doubling to 5s), at most five attempts, then the message goes to
+`<topic>.dlq` with `x-dlq-*` headers. A payload of a handled type that can
+never be applied (a missing required field, a malformed `data`) goes to
+`<topic>.dlq` at once. A message that is not a CloudEvents 1.0 event (the
+retired flat envelope included) is skipped with a WARN and committed past; so
+is an unknown type, silently. A handler that fails because the process is
+stopping is never dead-lettered and never committed
+(`TestDeadLetterCallsGuardCancellation`). Shutdown order: `/readyz` flips,
+HTTP drains, the consumers stop, then the expiry worker, then the outbox relay,
+then the pool closes.
