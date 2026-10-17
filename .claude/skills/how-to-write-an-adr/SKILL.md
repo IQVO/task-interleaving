@@ -64,8 +64,8 @@ Rules specific to this repo's ADRs:
 
 - Where an ADR records a cross-repo contract, verify it against the producer's
   `apis/asyncapi.yaml` on its `origin/develop`, and date the verification.
-  Mark a contract that does not exist yet as pending (as ADR 0003 does for
-  producer change P2).
+  Mark a contract that does not exist yet as pending (as ADR 0003 did for
+  producer change P2, now published by fulfillment-execution).
 - Adding a CloudEvents type to `apis/asyncapi.yaml` also needs its line in the
   type catalogue of `docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`
   (`TestEventCatalogueMatchesContract`).
@@ -81,7 +81,7 @@ and open the new ADR referencing it: `Accepted (date). Supersedes ADR NNNN.`
 ## Cross-repo decisions: use a companion ADR, not one repo's private opinion
 
 When a decision genuinely spans two bounded-context repos (for example the
-pending producer change P2 in fulfillment-execution and the consumer here, or
+producer change P2 in fulfillment-execution (done) and the consumer here, or
 the consumer change P3 that lets fulfillment-execution use
 `InterleavingHintIssued`), write ONE ADR per repo, each referencing the other
 explicitly as "the companion ADR" with a one-line description of the split of

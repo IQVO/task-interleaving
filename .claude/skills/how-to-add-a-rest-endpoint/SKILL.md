@@ -92,10 +92,11 @@ Lint it with the repo's spectral ruleset (`.spectral.yaml`). Then update
 
 ## 5. Behaviour: add a godog scenario
 
-If the endpoint is user-facing behaviour, add a Gherkin `.feature` file in the
-feature-files directory for the `make bdd` target (it does not exist yet; it
-arrives with the HTTP adapter) exercising it end-to-end against the real HTTP
-server — Given/When/Then over real HTTP, not mocked.
+If the endpoint is user-facing behaviour, add a Gherkin `.feature` file under `features/`
+for the `make bdd` target. The suite (`features_test.go`) drives the real use
+cases over the in-memory adapters, not the HTTP server, so also add an httptest
+in `internal/adapters/inbound/http` and a shape check against `apis/openapi.yaml`
+(`shape_test.go`).
 
 ## 6. Verify before opening the PR
 
