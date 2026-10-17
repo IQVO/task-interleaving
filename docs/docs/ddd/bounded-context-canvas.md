@@ -53,7 +53,7 @@ flowchart LR
     class BC bc
 ```
 
-`*` published by fulfillment-execution for RELOCATE tasks only.
+`*` published by fulfillment-execution for RELOCATE and REPLENISH tasks only.
 
 ### Outbound
 
@@ -112,7 +112,7 @@ may use as a tie-break inside one priority band.
 | Collaborator | Message | Kind | Channel | Status |
 | --- | --- | --- | --- | --- |
 | fulfillment-execution | `TaskCompleted` | event | `warehouse.fulfillment.events` | producer verified; consumer built (`FULFILLMENT_MODE=kafka`) |
-| fulfillment-execution | `TaskAvailable` (RELOCATE tasks only), `TaskClaimed` | events | `warehouse.fulfillment.events` | producer verified (its ADR 0049); consumer built |
+| fulfillment-execution | `TaskAvailable` (RELOCATE and REPLENISH tasks only), `TaskClaimed` (every task type) | events | `warehouse.fulfillment.events` | producer verified (its ADR 0049 and ADR 0050); consumer built |
 | facility-layout | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` | events | `warehouse.facility.events` | producer verified; consumer built (`LAYOUT_MODE=kafka`) |
 | operator (console, agent) | Declare policy | command | `PUT /sites/{siteId}/policy` | built |
 | operator (console, agent) | Get policy, list hints, get hint, get station, simulate | queries | `GET /sites/{siteId}/policy`, `GET /hints`, `GET /hints/{hintId}`, `GET /stations/{stationId}`, `POST /recommendations` | built |
@@ -173,10 +173,12 @@ From ADR 0001 and ADR 0003:
 
 ## Open questions
 
-- When does fulfillment-execution announce `TaskAvailable` for task types other than
-  RELOCATE, and when does it consume `InterleavingHintIssued`? Until the first, the
-  pool holds RELOCATE tasks only; until the second, hints are published and
-  observable only (ADR 0001).
+- When does fulfillment-execution announce `TaskAvailable` for the task types it
+  does not announce today (PICK, PACK, SLAM, REBIN: they carry no location there),
+  and when does it consume `InterleavingHintIssued`? Until the first, the pool
+  holds RELOCATE and REPLENISH tasks only; until the second, hints are published and
+  observable only (ADR 0001; out of scope in fulfillment-execution's ADR 0049 and
+  ADR 0050).
 - Expiry is triggered by the hint-expiry worker (`HINT_EXPIRY_INTERVAL`); no ADR names
   it, so a future ADR should record the interval as a decision.
 - Do the pool's `site_id` values equal the facility `siteCode` values, what share of
