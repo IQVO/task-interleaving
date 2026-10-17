@@ -7,28 +7,28 @@ sidebar_position: 1
 
 # Testing
 
-This page describes the test pyramid **as it is on `develop`**: a pure domain with
-exhaustive unit tests under a mutation gate, architecture fitness tests, two small
-adapter tests and spec linting. The upper layers of the fleet pyramid (BDD,
-integration, contract) have no tests here yet because the code they exercise (the
-service) is not merged.
+The test pyramid **as it is on `develop`**: a pure domain under a mutation gate,
+use cases and adapters with unit and httptest tests, a godog BDD suite over the
+real use cases, testcontainers integration suites against real Postgres and
+Kafka, architecture fitness tests, and spec linting.
 
-| Layer | Present on develop | Count / threshold | Command |
-| --- | --- | --- | --- |
-| Unit, domain | yes | 77 top-level test functions in 4 packages, 100% statement coverage, 90% gate | `make test`, `make coverage` |
-| Unit, adapters | yes | 6 tests in `internal/adapters/kafka/cloudevents`, 1 in `internal/adapters/outbound/kafka` | `make test` |
-| Architecture fitness | yes | 23 top-level test functions in `internal/architecture` | `make arch-test` |
-| Mutation (gremlins) | yes | efficacy 90, mutant coverage 90 (`.gremlins.yaml`); measured 100% / 100% | `make mutation`, `make mutation-full` |
-| Spec linting (Spectral) | yes | OpenAPI and AsyncAPI, `--fail-severity=warn` | CI `api-lint` |
-| BDD (godog / Gherkin) | **no** | 0 `.feature` files, 0 scenarios, no godog dependency | `make bdd` passes vacuously |
-| Integration (testcontainers) | **no** | no file carries the `integration` build tag | `make integration` runs `go test -tags=integration ./... -race -count=1` over nothing |
-| Contract (schemathesis) | **no** | no schemathesis configuration, no server to call | none |
-| Evals | **no** | `EVALS.md` at the repo root is a copy of the harness template's note about agent evaluation on inventory-storage; it measures nothing in this repo | none |
+| Layer | Count / threshold | Command |
+| --- | --- | --- |
+| Unit, domain | 85 top-level test functions in 4 packages (`policy` 16, `recommend` 17, `stationtrip` 43, `travel` 9) | `make test` |
+| Unit, application | 24 in `internal/application/{usecases,outbox}` (23 + 1) | `make test` |
+| Unit and httptest, adapters and `cmd/api` | `inbound/http` 55, `inbound/kafka` 46, `inbound/expiry` 11, `outbound/memory` 24, `outbound/events` 13, `outbound/outbox` 13, `outbound/kafka` 5, `kafka/cloudevents` 6, `outbound/postgres` 1 (DSN selection), `cmd/api` 25, `bootretry` 6 | `make test` |
+| Coverage gate | 90% over `./internal/domain/...,./internal/application/...`; measured 99.9% on this commit | `make coverage` |
+| BDD (godog / Gherkin) | 6 feature files, **68 scenarios** (64 `Scenario` blocks, one of which is an outline with 5 example rows), 608 steps; all pass | `make bdd` |
+| Integration (testcontainers) | 55 top-level tests behind `//go:build integration`: `cmd/api` 7, `inbound/kafka` 4, `outbound/outbox` 8, `outbound/postgres` 36 | `make integration` |
+| Architecture fitness | 22 top-level test functions in `internal/architecture` (one, the MCP optional-inputs sensor, skips because there is no MCP adapter) | `make arch-test` |
+| Mutation (gremlins) | efficacy 90, mutant coverage 90 (`.gremlins.yaml`); measured 100% / 100% on the four domain packages | `make mutation`, `make mutation-full` |
+| Spec linting (Spectral) | OpenAPI and AsyncAPI, `--fail-severity=warn` | CI `api-lint` |
+| Contract (schemathesis) | **none**: no schemathesis configuration and no CI job. Response shapes are checked against the OpenAPI document by a Go test instead (`internal/adapters/inbound/http/shape_test.go`) | none |
+| Evals | **none**: `EVALS.md` at the repo root is a copy of the harness template's note about agent evaluation on inventory-storage; it measures nothing in this repo | none |
 
-Counts come from `grep -c '^func Test'` per package on this commit
-(domain: policy 16, recommend 17, stationtrip 35, travel 9; adapters 6 and 1;
-architecture 23; total 107) and many of them are table-driven, so the number of
-cases is larger. Run `go test ./... -v` for the cases.
+Counts come from `grep '^func Test'` per package on this commit; many tests are
+table-driven, so the number of cases is larger. Run `go test ./... -v` for the
+cases.
 
 ## Make targets
 
@@ -38,15 +38,15 @@ scope and the mutation package list.
 | Target | Runs | Notes |
 | --- | --- | --- |
 | `make help` | prints the target list | default target |
-| `make build` | `go build ./...` | |
+| `make build` | `go build ./...` | compiles `cmd/api` |
 | `make vet` | `go vet ./...` | |
 | `make fmt` / `make fmt-check` | `gofmt -w .` / fail if `gofmt -l .` is non-empty | |
-| `make lint` | `golangci-lint run ./...` | pinned `v2.13.1`, config `.golangci.yml` |
-| `make test` | `go test ./... -race` | |
+| `make lint` | `golangci-lint run ./...` | pinned `v2.14.0`, config `.golangci.yml` |
+| `make test` | `go test ./... -race` | unit, httptest and BDD (the BDD suite is a normal `Test` function) |
 | `make coverage` | `go test ./... -race -coverprofile=coverage.out -coverpkg=./internal/domain/...,./internal/application/...` then the 90% gate | The CI `test` job runs exactly this; a workflow that defined its own `-coverpkg` would fail `repo_lint` R11. |
 | `make arch-test` | `go test ./internal/architecture/... -v` | |
-| `make bdd` | `go test ./... -run TestFeatures -v` | vacuous today: nothing is named `TestFeatures` |
-| `make integration` | `go test -tags=integration ./... -race -count=1` | needs Docker when a test exists; none does |
+| `make bdd` | `go test ./... -run TestFeatures -v` | the godog suite, `features_test.go` at the module root |
+| `make integration` | `go test -tags=integration ./... -race -count=1` | needs only Docker; every test boots its own Postgres and Kafka |
 | `make mutation` | `gremlins unleash` on each of `./internal/domain/stationtrip ./internal/domain/recommend ./internal/domain/travel ./internal/domain/policy` | the fast, blocking subset (`MUTATION_FAST_PKGS`) |
 | `make mutation-full` | `gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30` | the exhaustive scheduled run |
 | `make vuln` | `govulncheck ./...` | |
@@ -59,53 +59,79 @@ A new package under `internal/domain/` must be added to `MUTATION_FAST_PKGS` **a
 to the `for pkg in ...` loop of the `mutation-fast` CI job; the two lists are kept
 in sync by hand.
 
-## Unit tests of the domain
+## Unit tests
 
-The four domain packages are pure (standard library only, plus each other), so the
-tests need no fixtures and no container:
-
-- `policy`: site id token rules (rune count, space, `/`, control characters),
-  boundaries of `MaxDetourM` (NaN, ±Inf, 0, just above 0), `MaxCandidates` 1 to 5,
-  `HintTTL`, `VerticalWeight`, the eligible-type set (sorted, de-duplicated, unknown
-  and lower-case refused), immutability through accessors, `WithChanges` bumping the
-  version, `Restore` validating a persisted row.
-- `travel`: every axis with its weight, symmetry, rounding to 0.1 m (half rounds
-  up), and the rule *unknown geometry is unknown, never zero* for a missing point and
-  for NaN and Inf in each coordinate.
-- `recommend`: ranking by detour then task id, the tie-break being the id and not the
-  pool order, the cut to `MaxCandidates`, the detour boundary (equal to the limit
-  qualifies), each exclusion rule on its own (other site, ineligible type, the
-  completed task, no geometry, too far), de-duplication keeping the smallest detour,
-  independence of pool order, no mutation of the input, `ErrOriginUnknown` and
-  `ErrNoModel`.
-- `stationtrip`: position moving forward only (older and equal instants ignored,
-  validation before ignoring), one Active hint across many issues, supersede but not
-  of a terminal hint, the candidate rules (count, duplicates, eligibility, detour,
-  rank 1..n, ordering), the claim time window (at issue, one nanosecond before issue,
-  one nanosecond before expiry, at expiry), consumption at most once, expiry at and
-  after `expires_at`, ordered and clearable domain events, copies returned by
-  accessors, and a full trip (`TestAFullTrip`).
+- **Domain** (`policy`, `travel`, `recommend`, `stationtrip`): pure, standard
+  library only, no fixtures. They pin the site-id token rules, the policy
+  boundaries (`MaxDetourM`, `MaxCandidates` 1 to 5, `HintTTL`, `VerticalWeight`),
+  the rule *unknown geometry is unknown, never zero*, ranking by detour then task
+  id independent of pool order, the claim time window (one nanosecond before
+  issue, before expiry, at expiry), one Active hint per station, consumption at
+  most once, and ordered domain events.
+- **Use cases** (`internal/application/usecases`): run against the in-memory
+  adapters, including injected faults (`faults_test.go`), input validation
+  (`inputs_test.go`) and the completion path (`completion_station_test.go`).
+- **HTTP adapter**: `httptest` over the real router, one file per handler group
+  plus `idempotency_test.go` (replay, reuse, rollback on 4xx and 5xx, concurrent
+  first writers), `health_test.go` and `shape_test.go`, which walks the OpenAPI
+  schema and checks that the responses have exactly the documented shape.
+- **Kafka consumers**: a fake `Reader` drives the run loop (`consume_loop_test.go`:
+  retry, backoff sequence, dead-letter after 5 attempts, no commit before
+  success), `deadletter_test.go`, and per-consumer tests whose fixtures restate
+  the producers' published contracts as raw JSON, never built with this
+  service's own helper.
+- **Outbox relay and events**: relay cap and ordering with a fake store,
+  golden CloudEvents bytes in `outbound/events/testdata`.
+- **`cmd/api`**: env parsing (`config_test.go`), consumer planning
+  (`consumers_test.go`), shutdown order (`shutdown_test.go`), boot (`main_test.go`).
 
 Run one package or one test:
 
 ```bash
 go test ./internal/domain/recommend -run TestRecommendDetourBoundary -v
-go test ./internal/domain/... -cover
+go test ./internal/application/usecases -v
 ```
+
+## BDD (godog)
+
+`features/*.feature` holds six files: `hints.feature` (13 scenarios: hint
+lifecycle, supersede, consume, expiry, duplicates), `inert.feature` (3),
+`policy.feature` (12 blocks, one outline with 5 rows), `ranking.feature` (16),
+`simulation.feature` (10) and `tasks.feature` (10: pool and claim copies).
+`features_test.go` and its `features_setup/flow/assertions_test.go` companions
+wire the **real use cases over the in-memory adapters** with a fake clock, so the
+scenarios are fast and need no Docker. `go test . -run TestFeatures -v` ends with
+`68 scenarios (68 passed)` and `608 steps (608 passed)`.
+
+## Integration (testcontainers)
+
+All files carry `//go:build integration` and boot their own containers
+(`internal/testing/pgtest`, `internal/testing/kafkatest`); `TestMain` in
+`cmd/api`, `outbound/outbox` and `outbound/postgres` starts the shared
+Postgres, and a missing Docker is a test failure, never a skip.
+
+| Suite | Package | What it proves |
+| --- | --- | --- |
+| Service over Postgres | `cmd/api` (7) | boot migrates, `Idempotency-Key` is enforced, the simulation writes no outbox row, policy `PUT` is version guarded, a rejection leaves no effect and replays, concurrent requests with one key store one answer, the expiry worker expires a hint and enqueues the fact, boot **fails closed** on an unreachable database |
+| Repositories and contract | `outbound/postgres` (36) | the repository contract suite (`internal/testing/repocontract`) for policies, trips, task pool, location book, processed events and the idempotency store; one Active hint per station even under racing issuers; version-guarded policy writes under races; unit-of-work rollback and nesting; outbox ordering, retry, attempt cap and trace-context headers; migrations apply, re-run as a no-op, every `down` restores the previous schema, and run from the unpooled URL only |
+| Outbox relay | `outbound/outbox` (8) | exact envelopes published for issued/consumed/expired, crash and restart without duplicates, a crash between send and mark republishes the **same id**, the attempt cap excludes a poison row, re-arming claims it again, no cap lets a poison row block later rows |
+| Consumers | `inbound/kafka` (4) | the fulfillment consumer and the layout consumer over a real Kafka and Postgres, and the no-policy case issuing no hint |
+
+`make integration` and the CI `integration` job run the same command,
+`go test -tags=integration ./... -race -count=1`, which covers every package, so
+all four suites run in CI. An architecture fitness test fails the
+build if an integration test gates on `DATABASE_URL`/`KAFKA_BROKERS` or
+hard-codes `localhost:9092`.
 
 ## Mutation testing
 
 `.gremlins.yaml` sets `workers: 1`, `timeout-coefficient: 30`, and the thresholds
 `efficacy: 90` and `mutant-coverage: 90`. Gremlins fails when the measured value is
 **less than or equal to** the threshold, so a threshold sits strictly below what the
-code achieves. A run of `make mutation` on this commit measured:
-
-| Package | Killed | Lived | Not covered | Efficacy | Mutator coverage | Duration |
-| --- | --- | --- | --- | --- | --- | --- |
-| `stationtrip` | 51 | 0 | 0 | 100% | 100% | 2 min 1 s |
-| `recommend` | 7 | 0 | 0 | 100% | 100% | 1 min 7 s |
-| `travel` | 14 | 0 | 0 | 100% | 100% | 40 s |
-| `policy` | 26 | 0 | 0 | 100% | 100% | 41 s |
+code achieves. The file records a measurement of 2026-10-17 on the four domain
+packages (`stationtrip`, `recommend`, `travel`, `policy`): efficacy 100% and
+mutator coverage 100% in each, with 0 lived mutants. Only the domain is mutated;
+use cases and adapters are not.
 
 The scheduled `mutation` job (Monday 06:00 UTC and on manual dispatch) mutates
 `./internal/domain` as a whole. The `drift` job additionally runs
@@ -118,10 +144,9 @@ surviving mutant. A failing scheduled run opens or refreshes a `harness:red` iss
 `internal/architecture` carries the dependency-direction rules and source-scanning
 sensors listed with their rules on [Architecture](/docs/overview/architecture#rules-enforced-by-internalarchitecture).
 Each sensor that scans source also has a test that proves it can fail
-(`...SensorBites`, `...SensorFailsOnBadFixtures`, `TestEventCatalogueDetector`). Three
-sensors skip today because the code they police does not exist
-(`TestDeadLetterCallsGuardCancellation`, `TestMCPOptionalToolInputsCarryOmitempty`,
-`TestOutboxRelaysPassAttemptCap`); `go test` prints the reason of each skip.
+(`...SensorBites`, `...SensorFailsOnBadFixtures`, `TestEventCatalogueDetector`).
+Only `TestMCPOptionalToolInputsCarryOmitempty` skips (there is no MCP adapter);
+`go test` prints the reason.
 
 ```bash
 make arch-test
@@ -134,12 +159,12 @@ weekly (Monday 06:00 UTC, mutation and drift only) and on manual dispatch.
 
 | Job | Runs | When |
 | --- | --- | --- |
-| `lint` | `golangci-lint` v2.13.1, `--timeout=5m` | always |
+| `lint` | `golangci-lint` v2.14.0, `--timeout=5m` | always |
 | `guide-lint` | `scripts/harness/guide_lint.py` and `scripts/harness/test_hook.py`; **advisory** (`continue-on-error`) | always |
 | `complexity` | golangci-lint with only `gocyclo,gocognit,cyclop,funlen,nestif` (gate 15) plus an informational gocyclo report | always |
 | `test` | `go build ./...`, `go vet ./...`, then `make coverage` (90% gate); uploads `coverage.out` | always |
-| `bdd` | `go test ./... -run TestFeatures -v` | always; vacuous today |
-| `integration` | `go test -tags=integration ./... -race -count=1` | always; vacuous today |
+| `bdd` | `go test ./... -run TestFeatures -v` | always |
+| `integration` | `go test -tags=integration ./... -race -count=1` (testcontainers boots Postgres and Kafka on the runner's Docker) | always |
 | `mutation-fast` | installs gremlins v0.6.0, then `gremlins unleash` on `stationtrip`, `recommend`, `travel`, `policy` | always; blocking |
 | `mutation` | `gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30`, harness:red issue on failure | schedule and dispatch only |
 | `drift` | deadcode, `go mod tidy -diff`, knip in `web/`, coverage-quality; advisory | schedule and dispatch only |
@@ -153,9 +178,8 @@ weekly (Monday 06:00 UTC, mutation and drift only) and on manual dispatch.
 `.github/workflows/docs.yml` builds this site (`npm ci`, `npm run build` in `docs/`)
 on pull requests that touch `docs/**`, `apis/**` or the workflow, and deploys to
 GitHub Pages only on push to `main`. `.github/workflows/ai-review.yml` is an
-advisory architecture review on pull requests into `develop` that touch the domain,
-application, `apis/` or `charts/`; it does nothing without the `ANTHROPIC_API_KEY`
-secret.
+advisory architecture review on pull requests into `develop`; it does nothing
+without the `ANTHROPIC_API_KEY` secret.
 
 Jobs that show *skipping* on a pull request into `develop` (`mutation`, `drift`,
 `docker-publish`, `release`) are gated on events or branches by their `if:`
@@ -171,8 +195,9 @@ check as more than it is:
 - `release` and `chart-tests` refer to `charts/task-interleaving`, which does not
   exist (`chart-tests` therefore passes with a warning).
 - The `drift` job runs `npm ci` in `web/`, which does not exist.
-- `HARNESS.md` lists `docs-api-drift`, `web`, `helm-lint`, `trivy-scan` and CodeQL as
-  sensors; none is in `ci.yml`.
+- `HARNESS.md` lists `docs-api-drift`, `helm-lint`, `trivy-scan` and CodeQL as
+  sensors; none is in `ci.yml`. There is no job that regenerates the REST
+  reference and fails on a diff, so regenerate it yourself after any spec change.
 
 ## Reproducing the docs build
 

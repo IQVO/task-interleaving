@@ -9,34 +9,34 @@ sidebar_position: 2
 
 `task-interleaving` follows the fleet's hexagonal (ports and adapters) layout:
 dependencies point inward, the domain imports nothing from the rest of the
-module, and only `cmd/` wires the layers together.
-
-:::caution Built vs designed
-`develop` holds the **domain** (`internal/domain`), two **adapter building
-blocks** and the **fitness tests**. It has no `internal/application`, no HTTP or
-Kafka-consumer adapters, no Postgres adapter, no outbox relay and no `cmd/`
-binary. Those belong to the service branch that has not been merged. The diagrams
-below mark every box as *on develop* or *pending*.
-:::
+module, and only `cmd/` wires the layers together. Everything on this page is on
+`develop`; the one thing that is not (an MCP adapter) is called out.
 
 ## Layout
 
-| Layer | Path | On develop | Role |
-| --- | --- | --- | --- |
-| Domain | `internal/domain/policy` | yes | `Policy` aggregate (`InterleavingPolicy`): per-site settings, versioned, immutable. `SiteID`, `TaskType`, `Settings`. |
-| Domain | `internal/domain/travel` | yes | The travel-distance **port** `travel.Model` and its v1 implementation `Rectilinear` (`rectilinear-v1`). `Point`, `Place`. |
-| Domain | `internal/domain/recommend` | yes | The pure recommender `Recommend(Input)`; `OpenTask`, `Candidate`; `RectilinearFor(policy)`. |
-| Domain | `internal/domain/stationtrip` | yes | `StationTrip` aggregate: position, hint lifecycle, domain events `HintIssued`, `HintConsumed`, `HintExpired`. |
-| Application | `internal/application` (use cases) and `internal/application/ports` | **no** | Use cases and the OUT ports adapters implement. Pending the service merge. |
-| Inbound adapters | `internal/adapters/inbound/{http,kafka,mcp}` | **no** | REST handlers, Kafka consumers. Pending. |
-| Outbound adapters | `internal/adapters/outbound/kafka` | partly | Only `NewWriter(brokers)` exists: a synchronous, `RequiredAcks: RequireAll`, `Hash`-balanced kafka-go writer with no `Topic` (the relay sets `Message.Topic` per message). The Postgres repositories and the outbox relay are pending. |
-| Kafka envelope | `internal/adapters/kafka/cloudevents` | yes | The only place a CloudEvents 1.0 envelope is built or decoded: `New(Spec)`, `Decode`, `ContentTypeHeader`, `Type`, `DataSchema`. Constants `Repo = "task-interleaving"`, `Subdomain = "wes"`, `Context = "task-interleaving"`, `Source = "/warehouse/task-interleaving"`. |
-| Composition root | `cmd/` | **no** | Nothing under `cmd/` exists. |
-| Fitness tests | `internal/architecture` | yes | arch-go and source-scanning tests; see below. |
+| Layer | Path | Role |
+| --- | --- | --- |
+| Domain | `internal/domain/policy` | `Policy` aggregate (`InterleavingPolicy`): per-site settings, versioned, immutable. `SiteID`, `TaskType`, `Settings`. |
+| Domain | `internal/domain/travel` | The travel-distance **port** `travel.Model` and its v1 implementation `Rectilinear` (`rectilinear-v1`). `Point`, `Place`. |
+| Domain | `internal/domain/recommend` | The pure recommender `Recommend(Input)`; `OpenTask`, `Candidate`; `RectilinearFor(policy)`. |
+| Domain | `internal/domain/stationtrip` | `StationTrip` aggregate: position, hint lifecycle, domain events `HintIssued`, `HintConsumed`, `HintExpired`. |
+| Application | `internal/application/usecases` | The use cases (see [Use cases](/docs/ddd/use-cases)), `Intake` (claim-and-apply skeleton of the consumers), `Ranker` (the recommender over the local copies), `TripWriter` (save a trip and hand its events to the outbox). |
+| Application | `internal/application/ports`, `repository`, `outbox` | The OUT ports (`PolicyRepo`, `StationTripRepo`, `TaskPool`, `LocationBook`, `EventSink`, `ProcessedEvents`, `IdempotencyStore`, `UnitOfWork`, `Clock`, `IDGenerator`), the records they exchange and the already-encoded outbox `Message`. `ports` holds only interfaces. |
+| Inbound adapter | `internal/adapters/inbound/http` | chi router for `apis/openapi.yaml`: handlers, RFC 7807 problem mapping (`errors.go`), the `Idempotency-Key` middleware, `/healthz` and `/readyz`. No auth middleware. |
+| Inbound adapter | `internal/adapters/inbound/kafka` | The fulfillment and layout consumers: CloudEvents decode, dispatch on the full `type`, retry with backoff, dead-letter topic. Decode only; every effect is a use case. |
+| Inbound adapter | `internal/adapters/inbound/expiry` | Timer-driven worker that calls `ExpireHints` every interval. |
+| Outbound adapter | `internal/adapters/outbound/postgres` | pgxpool repositories, unit of work (`pgtx`), outbox repository, embedded migrations (`migrate.go`, top-level `migrations/`). |
+| Outbound adapter | `internal/adapters/outbound/memory` | In-memory implementation of every port, used without `DATABASE_URL` and by the BDD suite. |
+| Outbound adapter | `internal/adapters/outbound/events` | Maps domain facts to CloudEvents outbox messages (`Sink`, `encoder.go`). |
+| Outbound adapter | `internal/adapters/outbound/outbox` | The relay loop that drains the outbox to a sink. |
+| Outbound adapter | `internal/adapters/outbound/kafka` | `NewWriter` (acks=all, hash balancer, no fixed topic) and `RelaySink`. |
+| Kafka envelope | `internal/adapters/kafka/cloudevents` | The only place a CloudEvents 1.0 envelope is built or decoded: `New(Spec)`, `Decode`, `ContentTypeHeader`, `Type`, `DataSchema`. Constants `Repo = "task-interleaving"`, `Subdomain = "wes"`, `Context = "task-interleaving"`, `Source = "/warehouse/task-interleaving"`. |
+| Support | `internal/bootretry` | Exponential-backoff retry for the first outbound dials at boot. |
+| Composition root | `cmd/api` | `main.go` (run, shutdown order), `config.go` (env parsing), `adapters.go` (memory or Postgres), `consumers.go`, `relay.go` (workers). |
+| Test support | `internal/testing/{kafkatest,pgtest,repocontract}` | Shared testcontainers helpers and the repository contract suite run against both the memory and Postgres adapters. |
+| Fitness tests | `internal/architecture` | arch-go and source-scanning tests; see below. |
 
-### Ports as declared in the domain
-
-The domain declares exactly one port today:
+The domain declares one port, the distance model:
 
 ```go
 // internal/domain/travel/travel.go
@@ -54,107 +54,119 @@ takes the model as input (`Input.Model`, required: `ErrNoModel` otherwise) and
 in [ADR 0002](/docs/adr/0002-stationtrip-and-policy-aggregates)) implements the
 same interface under its own ADR.
 
-The application-level OUT ports (repositories, outbox, clock, id generator) are
-not declared yet: `internal/application/ports` does not exist on `develop`.
+## Binaries and ports
 
-## Component diagram
+| Binary | Role | Port | Probes |
+| --- | --- | --- | --- |
+| `cmd/api` | The only binary. REST API, hint-expiry worker, outbox relay (Postgres mode with `KAFKA_BROKERS`) and the two Kafka consumers (each opt-in) run in one process. | `HTTP_ADDR`, default `:8080` | `GET /healthz`, `GET /readyz` |
+
+There is no `cmd/mcp`: this context has no MCP server. How the process boots,
+what it starts and in which order it stops is in the
+[Runbook](/docs/operations/runbook); every variable is in
+[Configuration](/docs/operations/configuration).
+
+## Container and component diagram
 
 ```mermaid
 flowchart TB
-    subgraph pending["Pending the service merge (not on develop)"]
+    FE["fulfillment-execution<br/>topic warehouse.fulfillment.events"]
+    FL["facility-layout<br/>topic warehouse.facility.events"]
+    CLI["operators, console, agents<br/>REST, unauthenticated"]
+    subgraph svc["cmd/api (one process)"]
         direction TB
-        cmdapi["cmd/* composition root"]
-        http["inbound/http<br/>REST: policy, hints, stations, recommendations"]
-        kin["inbound/kafka<br/>consumers: fulfillment + layout copies"]
-        app["application<br/>use cases + ports"]
-        pg[("outbound/postgres<br/>aggregates, copies, outbox")]
-        relay["outbound relay<br/>outbox to Kafka"]
-    end
-    subgraph develop["On develop"]
-        direction TB
-        ce["adapters/kafka/cloudevents<br/>New / Decode / ContentTypeHeader"]
-        kw["adapters/outbound/kafka<br/>NewWriter (acks=all)"]
-        subgraph domain["internal/domain"]
-            st["stationtrip<br/>StationTrip aggregate + events"]
-            rc["recommend<br/>pure recommender"]
-            tr["travel<br/>Model port + rectilinear-v1"]
-            po["policy<br/>InterleavingPolicy aggregate"]
+        http["inbound/http<br/>chi router, problem+json,<br/>Idempotency-Key"]
+        kin["inbound/kafka<br/>fulfillment + layout consumers<br/>retry, DLQ, dedupe"]
+        exp["inbound/expiry<br/>sweeps expired hints"]
+        subgraph app["internal/application"]
+            uc["usecases<br/>Intake, Ranker, TripWriter"]
+            ports["ports + repository"]
         end
-        arch["internal/architecture<br/>fitness tests"]
+        subgraph dom["internal/domain"]
+            st["stationtrip"]
+            po["policy"]
+            rc["recommend"]
+            tr["travel"]
+        end
+        ev["outbound/events<br/>CloudEvents outbox messages"]
+        relay["outbound/outbox<br/>relay loop"]
+        kout["outbound/kafka<br/>RelaySink, acks=all"]
+        pgad["outbound/postgres<br/>repositories, outbox, migrations"]
+        mem["outbound/memory<br/>development mode"]
     end
-    cmdapi --> http
-    cmdapi --> kin
-    cmdapi --> app
-    cmdapi --> pg
-    cmdapi --> relay
-    http --> app
-    kin --> app
-    app --> st
-    app --> po
-    app --> rc
-    pg -. implements ports .-> app
-    relay --> kw
-    relay --> ce
+    PG[("Postgres<br/>10 tables")]
+    KB[("Kafka<br/>events + analytics topics")]
+    FE --> kin
+    FL --> kin
+    CLI --> http
+    http --> uc
+    kin --> uc
+    exp --> uc
+    uc --> ports
+    uc --> st
+    uc --> po
+    uc --> rc
     st --> rc
     st --> po
     st --> tr
     rc --> po
     rc --> tr
-    arch -. polices .-> domain
-    arch -. polices .-> ce
-    arch -. polices .-> kw
+    pgad -. implements .-> ports
+    mem -. implements .-> ports
+    ev -. implements EventSink .-> ports
+    ev --> pgad
+    pgad --> PG
+    relay --> pgad
+    relay --> kout
+    kout --> KB
 ```
 
-Source: `internal/domain/*/*.go` import lists (`stationtrip` imports `policy`,
-`recommend`, `travel`; `recommend` imports `policy`, `travel`; `policy` and
-`travel` import only the standard library),
-`internal/adapters/kafka/cloudevents/cloudevents.go`,
-`internal/adapters/outbound/kafka/writer.go`,
-`internal/architecture/architecture_test.go`. The *pending* box and its arrows are
-the layout fixed by [ADR 0001](/docs/adr/0001-task-interleaving-bounded-context)
-and [ADR 0004](/docs/adr/0004-cloudevents-envelope-and-type-catalogue); no code
-backs them on `develop`.
-
-## Binaries and ports
-
-There is no `cmd/` on `develop`, hence no binary, no listening port and no probe.
-The design (ADR 0001, `apis/openapi.yaml`) is **one deployable**: an API serving
-REST (the OpenAPI spec names `http://localhost:8080` locally and Kong's
-`/api/task-interleaving` in the kind cluster), the Kafka consumers and the outbox
-relay. How many binaries the service branch ends up with is not decided by
-anything on `develop`.
+Source: `cmd/api/main.go`, `cmd/api/adapters.go`, `cmd/api/consumers.go`,
+`cmd/api/relay.go` (wiring and workers), `internal/application/ports/ports.go`
+(the OUT ports), `internal/domain/*/*.go` import lists (`stationtrip` imports
+`policy`, `recommend`, `travel`; `recommend` imports `policy`, `travel`),
+`internal/adapters/outbound/events/sink.go` and
+`internal/architecture/architecture_test.go`. The `memory` box is wired instead
+of `postgres` and `events` when `DATABASE_URL` is unset.
 
 ## Data stores
 
-None exist in code on `develop`. The design calls for one Postgres database
-holding the two aggregates, the event-fed copies (open-task pool, claims, location
-geometry) and the transactional outbox
-([ADR 0003](/docs/adr/0003-local-copies-and-consumed-contracts),
-[ADR 0004](/docs/adr/0004-cloudevents-envelope-and-type-catalogue)), and the fleet's
-single Kafka broker for the topics `warehouse.task-interleaving.events` and
-`warehouse.task-interleaving.analytics`. The schema is not written; do not infer
-table names from this page.
+One Postgres database, created by the single embedded migration
+(`migrations/0001_interleaving_schema.up.sql`, [ADR 0005](/docs/adr/0005-persistence-and-evaluation-semantics)):
+
+| Table | Holds |
+| --- | --- |
+| `interleaving_policies` | One row per site, `version` guards every update. |
+| `station_trips`, `hints`, `candidates` | The StationTrip aggregate, the hint history (one Active hint per station, enforced by a partial unique index) and each hint's ranked candidates. |
+| `task_pool` | Local copy of the open-task pool, state `AVAILABLE`, `CLAIMED` or `COMPLETED`. |
+| `zones`, `locations` | Local copy of the facility layout, including geometry and the irreversible `decommissioned` flag. |
+| `processed_events` | `(consumer, event_id)` claims that make the consumers idempotent. |
+| `outbox_events` | The transactional outbox; one row per message and destination topic. |
+| `idempotency_keys` | Stored answers of `POST /recommendations`. |
+
+Without `DATABASE_URL` the same ports are served from process memory and
+nothing survives a restart. Kafka is the fleet's single broker; this service
+produces to `warehouse.task-interleaving.events` and
+`warehouse.task-interleaving.analytics` and consumes
+`warehouse.fulfillment.events` and `warehouse.facility.events`.
 
 ## Rules enforced by `internal/architecture`
 
-The tests run on every PR (`arch-test` job, `make arch-test`). Rules that apply
-to the code that exists:
+The tests run on every PR (`arch-test` job, `make arch-test`):
 
 | Test | Rule |
 | --- | --- |
-| `TestHexagonalArchitecture` (6 subtests) | `**.internal.domain.**` depends only on domain; `**.internal.application.**` only on domain and application; inbound adapters do not depend on outbound adapters and vice versa; nothing under `internal/` imports `cmd`; `internal/application/ports` holds only interfaces. Rules about packages that do not exist yet pass vacuously. |
+| `TestHexagonalArchitecture` (6 subtests) | `**.internal.domain.**` depends only on domain; `**.internal.application.**` only on domain and application; inbound adapters do not depend on outbound adapters and vice versa; nothing under `internal/` imports `cmd`; `internal/application/ports` holds only interfaces. |
 | `TestMCPAdapterDependencyRule` | An MCP adapter, if added, depends only on application and domain, and nothing depends on it. |
-| `TestNoAuthMiddlewareReintroduced` | No `"Bearer "`, `golang-jwt/jwt`, `dgrijalva/jwt-go` or `lestrrat-go/jwx` in non-comment source under `internal/adapters/inbound`: REST and MCP are unauthenticated fleet-wide. |
-| `TestKafkaConsumerGroupNeverHardcodedInline` | No `GroupID: "literal"`; the group id comes from a named symbol (the design reads it from `FULFILLMENT_CONSUMER_GROUP` / `LAYOUT_CONSUMER_GROUP`). |
+| `TestNoAuthMiddlewareReintroduced` | No `"Bearer "`, `golang-jwt/jwt`, `dgrijalva/jwt-go` or `lestrrat-go/jwx` in non-comment source under `internal/adapters/inbound`: REST is unauthenticated fleet-wide. |
+| `TestKafkaConsumerGroupNeverHardcodedInline` | No `GroupID: "literal"`; the group id comes from `FULFILLMENT_CONSUMER_GROUP` / `LAYOUT_CONSUMER_GROUP`. |
 | `TestNoEventEnvelopeToggleOrFlatEnvelope`, `TestCloudEventsOnly` | CloudEvents 1.0 is the only envelope: no `EVENT_ENVELOPE_MODE`, no flat `event_id` + `event_type` struct, and a module that uses kafka-go must import the CloudEvents SDK. |
 | `TestKafkaWritersSetRequiredAcks` | Every kafka-go `Writer{...}` literal sets `RequiredAcks` (the library default is fire-and-forget). |
 | `TestKafkaWriterTopicNotSetTwice` | If a package sets `Message.Topic`, no `Writer` in it sets `Topic` (kafka-go refuses such writes). |
 | `TestReplayConsumersSetCommitInterval` | A reader with a process-unique group id must set `CommitInterval`. |
+| `TestDeadLetterCallsGuardCancellation` | Every function under `internal/adapters/inbound/kafka` that sends to a dead-letter topic must check `ctx.Err()` or `context.Canceled` (or carry a `//dlq:deterministic <reason>` annotation), so a shutdown never dead-letters a message that was only mid-flight. |
+| `TestOutboxRelaysPassAttemptCap` | Every `NewRelay` / `NewOutboxRelay` call passes a `WithMaxAttempts(...)` option; there is no skip path. |
 | `TestEventCatalogueMatchesContract` | Every full CloudEvents type that `apis/asyncapi.yaml` declares for this service appears in the CloudEvents ADR (`docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`). |
 | `TestKafkaIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationTestsUseTestcontainers` | `*_integration_test.go` files boot their own broker or database; no `KAFKA_BROKERS` / `DATABASE_URL` gate, no `localhost:9092`. |
 
-Rules that skip today because the code they police is absent:
-`TestDeadLetterCallsGuardCancellation` (no `internal/adapters/inbound/kafka`),
-`TestMCPOptionalToolInputsCarryOmitempty` (no MCP adapter) and
-`TestOutboxRelaysPassAttemptCap` (no outbox relay). They start biting when the
-service lands. Details and run commands are on [Testing](/docs/development/testing).
+`TestMCPOptionalToolInputsCarryOmitempty` skips (there is no MCP adapter); every
+other sensor runs. Details and commands are on [Testing](/docs/development/testing).

@@ -8,24 +8,29 @@ Task Interleaving: WES-tier Supporting bounded context of the warehouse-systems 
 
 ## Status
 
-The service is being built on a separate branch and is not on `develop` yet. What `develop` has today:
+The service is on `develop` (merged in PR #7). One binary, `cmd/api`:
 
-- the domain: `internal/domain/policy` (InterleavingPolicy), `travel` (the distance port and `rectilinear-v1`), `recommend` (the pure ranker) and `stationtrip` (StationTrip with its hint lifecycle), at 100% statement coverage and a 90/90 mutation gate;
-- the contracts: `apis/openapi.yaml` (REST) and `apis/asyncapi.yaml` (events);
-- the architecture fitness tests in `internal/architecture`;
-- the CloudEvents helper (`internal/adapters/kafka/cloudevents`) and the acks=all Kafka writer constructor (`internal/adapters/outbound/kafka`);
-- ADRs 0001 to 0004 in `docs/adr/`.
+- REST on `HTTP_ADDR` (default `:8080`) for `apis/openapi.yaml`, RFC 7807 problems, an `Idempotency-Key` middleware on `POST /recommendations`, `/healthz` and `/readyz`;
+- Postgres repositories with embedded boot migrations (or in-memory adapters when `DATABASE_URL` is unset);
+- a transactional outbox and a Kafka relay with an attempt cap (needs `DATABASE_URL` and `KAFKA_BROKERS`);
+- a hint-expiry worker;
+- two opt-in Kafka consumers (`FULFILLMENT_MODE`, `LAYOUT_MODE`) with retry, a `<topic>.dlq` dead-letter topic and processed-event de-duplication.
 
-There is no `cmd/`, no migration, no HTTP server, no Kafka consumer and no outbox relay on `develop`, so there is nothing to start yet.
+Not built: an MCP server, a Helm chart, a `Dockerfile`, OpenTelemetry metrics or traces, a `warehouse-infra` entry, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge.
 
 ## Layout
 
 ```text
 apis/                 openapi.yaml, asyncapi.yaml (the contracts)
+cmd/api/              the composition root (config, adapters, consumers, relay)
+migrations/           embedded SQL migrations (0001_interleaving_schema)
+features/             godog scenarios (6 files, 68 scenarios)
 docs/                 Docusaurus site (docs/docs) and the ADRs (docs/adr)
 internal/domain/      policy, travel, recommend, stationtrip
-internal/adapters/    kafka/cloudevents, outbound/kafka
+internal/application/ usecases, ports, repository, outbox
+internal/adapters/    inbound/{http,kafka,expiry}, outbound/{postgres,memory,events,outbox,kafka}, kafka/cloudevents
 internal/architecture hexagonal and fleet fitness tests
+internal/testing/     testcontainers helpers and the repository contract suite
 scripts/harness/      agent-guide and config lint
 ```
 
@@ -33,8 +38,10 @@ scripts/harness/      agent-guide and config lint
 
 | Command | What it runs |
 | --- | --- |
-| `make check` | gofmt check, vet, build, golangci-lint v2.13.1, `go test -race` |
+| `make check` | gofmt check, vet, build, golangci-lint v2.14.0, `go test -race` |
 | `make check-all` | `check` plus the 90% coverage gate, architecture tests and BDD |
+| `make bdd` | the godog suite (`go test ./... -run TestFeatures -v`) |
+| `make integration` | testcontainers suites, needs Docker (`go test -tags=integration ./... -race -count=1`) |
 | `make arch-test` | the fitness tests in `internal/architecture` |
 | `make mutation` | gremlins on the four domain packages, thresholds in `.gremlins.yaml` |
 
@@ -42,21 +49,25 @@ CI is `.github/workflows/ci.yml`; the jobs are listed in the Testing page below.
 
 ## Documentation
 
-Published at <https://iqvo.github.io/task-interleaving/> (built from `docs/` by `.github/workflows/docs.yml`; pull requests build it, `main` deploys it). The service itself is not on `develop` yet: the pages below describe the domain, the contracts and the tests that are, and mark everything else as designed or pending.
+Published at <https://iqvo.github.io/task-interleaving/> (built from `docs/` by `.github/workflows/docs.yml`; pull requests build it, `main` deploys it).
 
 | Page | Source file | What it covers |
 | --- | --- | --- |
 | Introduction | [`docs/docs/overview/introduction.md`](docs/docs/overview/introduction.md) | What the context owns, classification, capabilities, what is on `develop` |
-| Architecture | [`docs/docs/overview/architecture.md`](docs/docs/overview/architecture.md) | Layers, the `travel.Model` port, component diagram, fitness rules |
-| Quickstart | [`docs/docs/overview/quickstart.md`](docs/docs/overview/quickstart.md) | `make` targets and a verified domain walk-through (no server to run yet) |
-| Testing | [`docs/docs/development/testing.md`](docs/docs/development/testing.md) | Test pyramid as it is, mutation thresholds, every CI job |
-| Integration | [`docs/docs/ecosystem/integration.md`](docs/docs/ecosystem/integration.md) | Upstream and downstream contracts with status |
-| Use cases | [`docs/docs/ddd/use-cases.md`](docs/docs/ddd/use-cases.md) | Domain operations, invariants, events (application layer pending) |
+| Architecture | [`docs/docs/overview/architecture.md`](docs/docs/overview/architecture.md) | Layers, the binary and its port, container diagram, data stores, fitness rules |
+| Quickstart | [`docs/docs/overview/quickstart.md`](docs/docs/overview/quickstart.md) | Build, run in-memory and on Postgres, first calls with real output, Kafka wiring |
+| Configuration | [`docs/docs/operations/configuration.md`](docs/docs/operations/configuration.md) | Every environment variable of `cmd/api`, the mode matrix, compiled-in settings |
+| Runbook | [`docs/docs/operations/runbook.md`](docs/docs/operations/runbook.md) | Deployment facts, probes, boot and shutdown order, migrations, Kafka topics and groups, outbox relay, expiry worker, procedures |
+| Observability | [`docs/docs/operations/observability.md`](docs/docs/operations/observability.md) | Logs and their fields; the absence of metrics and traces; suggested checks |
+| Troubleshooting | [`docs/docs/operations/troubleshooting.md`](docs/docs/operations/troubleshooting.md) | Symptom, cause, check, fix; REST problem types |
+| Testing | [`docs/docs/development/testing.md`](docs/docs/development/testing.md) | Test pyramid as it is, make targets, BDD and integration suites, mutation thresholds, every CI job |
+| Integration | [`docs/docs/ecosystem/integration.md`](docs/docs/ecosystem/integration.md) | Upstream and downstream contracts with the status of every edge |
+| Use cases | [`docs/docs/ddd/use-cases.md`](docs/docs/ddd/use-cases.md) | The 14 application use cases: trigger, inputs, invariants, events |
 | Subdomain classification | [`docs/docs/ddd/subdomain-classification.md`](docs/docs/ddd/subdomain-classification.md) | Supporting, WES tier, neighbours from the fleet table |
 | DDD artifacts | [`docs/docs/ddd/ddd-artifacts.md`](docs/docs/ddd/ddd-artifacts.md) | Index of the 11-page ddd-crew pack (core domain chart, canvas, context map, aggregate canvas, message flow, EventStorming, language, class, ER, sequence, events) |
 | API reference | [`docs/docs/api-reference/overview.md`](docs/docs/api-reference/overview.md), [`events.md`](docs/docs/api-reference/events.md) | REST (generated from `apis/openapi.yaml`) and event catalogue |
-| ADRs | [`docs/adr/index.md`](docs/adr/index.md) | Decisions 0001 to 0004 with status |
+| ADRs | [`docs/adr/index.md`](docs/adr/index.md) | Decisions 0001 to 0005 with status |
 
-Not written yet because there is no code to ground them: configuration, runbook, observability and troubleshooting (operations), and an MCP page. They arrive with the service.
+There is no MCP page because there is no `cmd/mcp`.
 
 Build the site locally: `cd docs && npm ci && npm run build`.
