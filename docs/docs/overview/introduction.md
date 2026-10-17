@@ -23,9 +23,12 @@ state ([ADR 0001](/docs/adr/0001-task-interleaving-bounded-context)).
 The service merged to `develop` in PR #7: one binary, `cmd/api`, with a chi REST
 adapter (RFC 7807 problems, `Idempotency-Key` middleware), Postgres repositories
 with embedded migrations, a transactional outbox with a Kafka relay, a hint-expiry
-worker, and two opt-in Kafka consumers (fulfillment-execution and facility-layout)
-with retry, a dead-letter topic and processed-event de-duplication. It runs
-in-memory without `DATABASE_URL`.
+worker, and two Kafka consumers (fulfillment-execution and facility-layout)
+with retry, a dead-letter topic and processed-event de-duplication. It runs on
+real Postgres and real Kafka only: there is no in-memory mode, the consumers and
+the relay are always on, and `DATABASE_URL`, `KAFKA_BROKERS` and both consumer
+group ids are mandatory
+([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
 
 Not built: an MCP server (`cmd/mcp`), a Helm chart, a `Dockerfile`, any
 OpenTelemetry metric or trace, and a consumer of the hint in fulfillment-execution.
@@ -57,7 +60,7 @@ The [Runbook](/docs/operations/runbook#deployment) and
    (`PUT /sites/{siteId}/policy`, `If-Match` / `ETag`).
 2. Keep the open-task pool and the location geometry current from Kafka
    (`TaskAvailable`, `TaskClaimed`, `TaskCompleted`; zone, location and geometry
-   events), opt-in per consumer.
+   events), always on.
 3. After a `TaskCompleted`, record the station's position and issue a hint of up
    to five nearby open tasks.
 4. Mark the hint `Consumed` when the hinted station claims one of its candidates,

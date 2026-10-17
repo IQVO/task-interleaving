@@ -26,14 +26,15 @@ module, and only `cmd/` wires the layers together. Everything on this page is on
 | Inbound adapter | `internal/adapters/inbound/kafka` | The fulfillment and layout consumers: CloudEvents decode, dispatch on the full `type`, retry with backoff, dead-letter topic. Decode only; every effect is a use case. |
 | Inbound adapter | `internal/adapters/inbound/expiry` | Timer-driven worker that calls `ExpireHints` every interval. |
 | Outbound adapter | `internal/adapters/outbound/postgres` | pgxpool repositories, unit of work (`pgtx`), outbox repository, embedded migrations (`migrate.go`, top-level `migrations/`). |
-| Outbound adapter | `internal/adapters/outbound/memory` | In-memory implementation of every port, used without `DATABASE_URL` and by the BDD suite. |
+| Outbound adapter | `internal/adapters/outbound/memory` | In-memory implementation of every port: a **test double** for the unit and BDD suites. The shipped binary never imports it (`TestRuntimeBinaryHasNoInMemoryAdapters`). |
+| Outbound adapter | `internal/adapters/outbound/system` | The production `Clock` and hint-id generator, the two adapters that need no infrastructure. |
 | Outbound adapter | `internal/adapters/outbound/events` | Maps domain facts to CloudEvents outbox messages (`Sink`, `encoder.go`). |
 | Outbound adapter | `internal/adapters/outbound/outbox` | The relay loop that drains the outbox to a sink. |
-| Outbound adapter | `internal/adapters/outbound/kafka` | `NewWriter` (acks=all, hash balancer, no fixed topic) and `RelaySink`. |
+| Outbound adapter | `internal/adapters/outbound/kafka` | `NewWriter` (acks=all, hash balancer, no fixed topic), `RelaySink` and `BrokerCheck` (the Kafka half of `/readyz`). |
 | Kafka envelope | `internal/adapters/kafka/cloudevents` | The only place a CloudEvents 1.0 envelope is built or decoded: `New(Spec)`, `Decode`, `ContentTypeHeader`, `Type`, `DataSchema`. Constants `Repo = "task-interleaving"`, `Subdomain = "wes"`, `Context = "task-interleaving"`, `Source = "/warehouse/task-interleaving"`. |
 | Support | `internal/bootretry` | Exponential-backoff retry for the first outbound dials at boot. |
-| Composition root | `cmd/api` | `main.go` (run, shutdown order), `config.go` (env parsing), `adapters.go` (memory or Postgres), `consumers.go`, `relay.go` (workers). |
-| Test support | `internal/testing/{kafkatest,pgtest,repocontract}` | Shared testcontainers helpers and the repository contract suite run against both the memory and Postgres adapters. |
+| Composition root | `cmd/api` | `main.go` (run, shutdown order), `config.go` (env parsing, `loadBootConfig`), `adapters.go` (the Postgres adapters), `consumers.go`, `relay.go` (workers), `topics.go` (what `/readyz` requires). |
+| Test support | `internal/testing/{kafkatest,pgtest,repocontract}` | Shared testcontainers helpers (the test broker has topic auto-creation off) and the repository contract suite run against both the memory and Postgres adapters. |
 | Fitness tests | `internal/architecture` | arch-go and source-scanning tests; see below. |
 
 The domain declares one port, the distance model:
@@ -58,7 +59,7 @@ same interface under its own ADR.
 
 | Binary | Role | Port | Probes |
 | --- | --- | --- | --- |
-| `cmd/api` | The only binary. REST API, hint-expiry worker, outbox relay (Postgres mode with `KAFKA_BROKERS`) and the two Kafka consumers (each opt-in) run in one process. | `HTTP_ADDR`, default `:8080` | `GET /healthz`, `GET /readyz` |
+| `cmd/api` | The only binary. REST API, hint-expiry worker, outbox relay and the two Kafka consumers run in one process, all always on, on real Postgres and Kafka ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). | `HTTP_ADDR`, default `:8080` | `GET /healthz` (liveness), `GET /readyz` (drain gate, Postgres ping, Kafka topics have a leader) |
 
 There is no `cmd/mcp`: this context has no MCP server. How the process boots,
 what it starts and in which order it stops is in the
@@ -91,7 +92,7 @@ flowchart TB
         relay["outbound/outbox<br/>relay loop"]
         kout["outbound/kafka<br/>RelaySink, acks=all"]
         pgad["outbound/postgres<br/>repositories, outbox, migrations"]
-        mem["outbound/memory<br/>development mode"]
+        sys["outbound/system<br/>clock, hint ids"]
     end
     PG[("Postgres<br/>10 tables")]
     KB[("Kafka<br/>events + analytics topics")]
@@ -111,7 +112,7 @@ flowchart TB
     rc --> po
     rc --> tr
     pgad -. implements .-> ports
-    mem -. implements .-> ports
+    sys -. implements Clock, IDGenerator .-> ports
     ev -. implements EventSink .-> ports
     ev --> pgad
     pgad --> PG
@@ -121,12 +122,13 @@ flowchart TB
 ```
 
 Source: `cmd/api/main.go`, `cmd/api/adapters.go`, `cmd/api/consumers.go`,
-`cmd/api/relay.go` (wiring and workers), `internal/application/ports/ports.go`
+`cmd/api/relay.go` (wiring and workers), `cmd/api/topics.go`,
+`internal/application/ports/ports.go`
 (the OUT ports), `internal/domain/*/*.go` import lists (`stationtrip` imports
 `policy`, `recommend`, `travel`; `recommend` imports `policy`, `travel`),
 `internal/adapters/outbound/events/sink.go` and
-`internal/architecture/architecture_test.go`. The `memory` box is wired instead
-of `postgres` and `events` when `DATABASE_URL` is unset.
+`internal/architecture/architecture_test.go`. The in-memory adapters are not in
+the diagram because the binary does not wire them.
 
 ## Data stores
 
@@ -143,11 +145,13 @@ One Postgres database, created by the single embedded migration
 | `outbox_events` | The transactional outbox; one row per message and destination topic. |
 | `idempotency_keys` | Stored answers of `POST /recommendations`. |
 
-Without `DATABASE_URL` the same ports are served from process memory and
-nothing survives a restart. Kafka is the fleet's single broker; this service
-produces to `warehouse.task-interleaving.events` and
+Postgres is the only store: the service refuses to boot without `DATABASE_URL`
+and nothing is served from process memory. Kafka is the fleet's single broker;
+this service produces to `warehouse.task-interleaving.events` and
 `warehouse.task-interleaving.analytics` and consumes
-`warehouse.fulfillment.events` and `warehouse.facility.events`.
+`warehouse.fulfillment.events` and `warehouse.facility.events`. It never creates
+a topic: infrastructure owns them, and `/readyz` is 503 until all four have a
+leader.
 
 ## Rules enforced by `internal/architecture`
 
@@ -159,6 +163,7 @@ The tests run on every PR (`arch-test` job, `make arch-test`):
 | `TestMCPAdapterDependencyRule` | An MCP adapter, if added, depends only on application and domain, and nothing depends on it. |
 | `TestNoAuthMiddlewareReintroduced` | No `"Bearer "`, `golang-jwt/jwt`, `dgrijalva/jwt-go` or `lestrrat-go/jwx` in non-comment source under `internal/adapters/inbound`: REST is unauthenticated fleet-wide. |
 | `TestKafkaConsumerGroupNeverHardcodedInline` | No `GroupID: "literal"`; the group id comes from `FULFILLMENT_CONSUMER_GROUP` / `LAYOUT_CONSUMER_GROUP`. |
+| `TestRuntimeBinaryHasNoInMemoryAdapters`, `TestRuntimeBinarySensorBites` | No non-test file under `cmd/**` imports `internal/adapters/outbound/memory`: the binary runs on Postgres and Kafka only (ADR 0006). The second test proves the detector flags plain, aliased, blank, dot and nested imports. |
 | `TestNoEventEnvelopeToggleOrFlatEnvelope`, `TestCloudEventsOnly` | CloudEvents 1.0 is the only envelope: no `EVENT_ENVELOPE_MODE`, no flat `event_id` + `event_type` struct, and a module that uses kafka-go must import the CloudEvents SDK. |
 | `TestKafkaWritersSetRequiredAcks` | Every kafka-go `Writer{...}` literal sets `RequiredAcks` (the library default is fire-and-forget). |
 | `TestKafkaWriterTopicNotSetTwice` | If a package sets `Message.Topic`, no `Writer` in it sets `Topic` (kafka-go refuses such writes). |

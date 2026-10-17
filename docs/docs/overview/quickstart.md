@@ -7,10 +7,11 @@ sidebar_position: 3
 
 # Quickstart
 
-Build the service, run it in-memory, make the first calls, then run it against
-Postgres and wire Kafka. Every response below was captured from a real run of
-`cmd/api` built from this commit (driven with Python `urllib`; `curl` returns the
-same bodies).
+Build the service, boot it (and see what it refuses to boot without), run it on
+Postgres and Kafka and make the first calls. The boot refusals, the readiness
+answer and the policy call below were captured from real runs of `cmd/api`
+built from this commit; the other REST answers were captured from an earlier
+run of the same API (the REST surface did not change).
 
 ## Prerequisites
 
@@ -27,8 +28,11 @@ same bodies).
 | lefthook | optional | `lefthook install` wires `make fmt-check vet lint` at pre-commit and `make check` at pre-push |
 
 The fleet runs **one** Kafka broker (in-cluster, reachable at `localhost:9092`
-through the kind cluster's external access); the docker-compose Kafka is retired.
-You only need it for the consumers and the outbox relay, both optional.
+through the kind cluster's external access); the docker-compose Kafka is retired
+for the fleet. The service needs Postgres **and** Kafka to boot and to be ready:
+there is no mode without them ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
+`make run-local` starts a throwaway Postgres and Kafka with `docker-compose.yml`
+(see the note in the README: that file is not verified end to end).
 
 ## Build, test, run
 
@@ -47,33 +51,84 @@ make integration   # go test -tags=integration ./... -race -count=1 (needs Docke
 `make coverage` ends with `Coverage: 99.9% (gate: 90%, scope:
 ./internal/domain/...,./internal/application/...)` on this commit.
 
-Build and start the binary (in-memory mode, no database, no Kafka):
+Build the binary and start it with nothing configured:
 
 ```bash
 go build -o task-interleaving ./cmd/api
 HTTP_ADDR=127.0.0.1:18080 ./task-interleaving
 ```
 
-The startup log (JSON lines on stdout):
+It refuses to boot, before it opens a connection or binds the port, and names
+every mandatory variable that is missing (exit status 1; real output, `time`
+omitted):
 
 ```text
-{"level":"INFO","msg":"DATABASE_URL not configured; using in-memory adapters (no outbox relay, Idempotency-Key not enforced)"}
-{"level":"INFO","msg":"no consumer is in kafka mode; the local copies are whatever the database holds"}
-{"level":"INFO","msg":"outbox relay off: in-memory mode has no outbox"}
-{"level":"INFO","msg":"http server listening","addr":"127.0.0.1:18080"}
-{"level":"INFO","msg":"hint expiry worker running","interval":"5s"}
+{"level":"ERROR","msg":"service exited with error","error":"invalid configuration: DATABASE_URL is required: this context runs on real Postgres\nKAFKA_BROKERS is required: this context runs on real Kafka\nFULFILLMENT_CONSUMER_GROUP is required: this context runs on real Kafka\nLAYOUT_CONSUMER_GROUP is required: this context runs on real Kafka"}
 ```
 
-(`time` fields omitted.) Stop it with Ctrl-C; it flips `/readyz` to 503, waits
-`SHUTDOWN_DRAIN_DELAY` (5 s) and drains.
+`*_MODE=permissive` and a bad `HINT_EXPIRY_INTERVAL` are boot errors too:
 
-## First calls (in-memory)
+```text
+invalid configuration: FULFILLMENT_MODE=permissive is not supported: this context runs on real Kafka
+HINT_EXPIRY_INTERVAL "soon" is not a valid duration (use a Go duration such as 5s or 500ms): time: invalid duration "soon"
+```
+
+## Run on Postgres and Kafka
+
+Start a throwaway database (use your Kafka for the broker; the four topics
+`warehouse.fulfillment.events`, `warehouse.facility.events`,
+`warehouse.task-interleaving.events` and `warehouse.task-interleaving.analytics`
+must exist: the service never creates topics):
+
+```bash
+docker run -d --rm --name ti-pg -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=ti \
+  -p 127.0.0.1:55432:5432 postgres:16-alpine
+
+DATABASE_URL='postgres://postgres:pw@127.0.0.1:55432/ti?sslmode=disable' \
+KAFKA_BROKERS=localhost:9092 \
+FULFILLMENT_CONSUMER_GROUP=task-interleaving-fulfillment-dev \
+LAYOUT_CONSUMER_GROUP=task-interleaving-layout-dev \
+HTTP_ADDR=127.0.0.1:18080 ./task-interleaving
+```
+
+The group ids are yours to choose (the code has none); a fresh group replays its
+topic from the first offset, so the layout copy converges by itself. Migrations
+run at boot. The startup log (JSON lines on stdout, `time` omitted) is, in
+order: `postgres adapters configured`, `kafka topics (owned by infrastructure;
+the service never creates them)` with the `brokers`, `consumes` and `produces`
+lists, one `consumer running` line per consumer (`topic`, `group_id`,
+`brokers`), `hint expiry worker running`, `outbox relay running` and `http
+server listening`. The [Observability](/docs/operations/observability) page lists
+every message.
+
+`/readyz` is ready only while Postgres answers and all four topics have a
+leader. With the database up and the broker **unreachable** (a real run against
+`KAFKA_BROKERS=127.0.0.1:1`) the process stays up and live, the consumers log
+`kafka reader error; retrying` and the probe says what is down, never why:
+
+```text
+curl -si localhost:18080/readyz
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/problem+json
+
+{"type":"https://errors.task-interleaving.warehouse-systems.dev/dependency-unavailable","title":"A runtime dependency is unavailable","status":503,"detail":"not ready: kafka","instance":"/readyz"}
+
+curl -s localhost:18080/healthz
+{"status":"ok"}
+```
+
+(the cause, here `dial tcp 127.0.0.1:1: connect: connection refused`, is in the
+WARN log `readiness: dependency is not ready`). Stop it with Ctrl-C; it flips
+`/readyz` to 503, waits `SHUTDOWN_DRAIN_DELAY` (5 s), drains HTTP, stops the
+consumers, the expiry worker and the relay, and closes the pool.
+
+## First calls
 
 REST is unauthenticated. Probes, then declare a policy:
 
 ```bash
 curl -s localhost:18080/healthz    # {"status":"ok"}
-curl -s localhost:18080/readyz     # {"status":"ready"}
+curl -s localhost:18080/readyz     # {"status":"ready"} once Postgres and Kafka are up
 
 curl -si -X PUT localhost:18080/sites/SITE-1/policy \
   -H 'Content-Type: application/json' \
@@ -82,7 +137,7 @@ curl -si -X PUT localhost:18080/sites/SITE-1/policy \
 
 ```text
 200 OK, header ETag: "1", Content-Type: application/json
-{"siteId":"SITE-1","maxDetourM":25,"maxCandidates":3,"hintTtlSeconds":90,"eligibleTaskTypes":["PICK","REPLENISH"],"verticalWeight":1.5,"version":1,"declaredAt":"2026-10-17T13:37:50.88072Z"}
+{"siteId":"SITE-1","maxDetourM":25,"maxCandidates":3,"hintTtlSeconds":90,"eligibleTaskTypes":["PICK","REPLENISH"],"verticalWeight":1.5,"version":1,"declaredAt":"2026-10-17T17:57:02.317337Z"}
 ```
 
 Replacing a policy needs the current version as `If-Match`; the first
@@ -97,36 +152,14 @@ declaration must not send one. Observed answers:
 | `GET /hints` | `200 {"items":[]}` |
 | `GET /hints?limit=0` | `400` `invalid-limit` |
 | `GET /stations/STN-1` | `404` `station-not-found` ("no completion has been recorded for the station") |
-| `POST /recommendations` `{"stationId":"STN-1"}` | `422` `station-position-unknown` ("send fromLocation") |
-| `POST /recommendations` `{"stationId":"STN-1","fromLocation":"NOWHERE"}` | `422` `origin-unknown` ("no geometry is known for location NOWHERE") |
+| `POST /recommendations` `{"stationId":"STN-1"}` | `400` `idempotency-key-required` without the header; with it, `422` `station-position-unknown` ("send fromLocation") |
+| `POST /recommendations` `{"stationId":"STN-1","fromLocation":"NOWHERE"}` (with a key) | `422` `origin-unknown` ("no geometry is known for location NOWHERE") |
 
 All errors are `application/problem+json`, for example:
 
 ```json
 {"type":"https://errors.task-interleaving.warehouse-systems.dev/policy-not-found","title":"Interleaving policy not found","status":404,"detail":"the site has not declared an interleaving policy","instance":"/sites/SITE-1/policy"}
 ```
-
-In-memory mode has no task pool or layout, because nothing feeds them: the
-consumers write into the same process memory, and with no Kafka there is no
-input. To see a real recommendation run against Postgres.
-
-## Run against Postgres
-
-Start a throwaway database and the service (migrations run at boot):
-
-```bash
-docker run -d --rm --name ti-pg -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=ti \
-  -p 127.0.0.1:55432:5432 postgres:16-alpine
-
-DATABASE_URL='postgres://postgres:pw@127.0.0.1:55432/ti?sslmode=disable' \
-HTTP_ADDR=127.0.0.1:18080 ./task-interleaving
-```
-
-Boot log: `postgres adapters configured`, then
-`outbox relay off: KAFKA_BROKERS is not set; events accumulate in outbox_events
-until it is` (WARN). `schema_migrations` reads `version 1, dirty f` and the public
-schema holds `candidates, hints, idempotency_keys, interleaving_policies, locations,
-outbox_events, processed_events, schema_migrations, station_trips, task_pool, zones`.
 
 Declare a policy, then look at the outbox:
 
@@ -138,11 +171,24 @@ docker exec ti-pg psql -U postgres -d ti -At \
 # 1|warehouse.task-interleaving.analytics|com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared|SITE-1|0
 ```
 
+The relay publishes that row to Kafka within `OUTBOX_RELAY_INTERVAL` (1 s by
+default) and sets `published_at`. While Kafka is unreachable `attempts` grows by
+one per pass and the row is parked at `OUTBOX_MAX_ATTEMPTS` (20); see the
+[Runbook](/docs/operations/runbook#kafka).
+
+`schema_migrations` reads `version 1, dirty f` and the public schema holds
+`candidates, hints, idempotency_keys, interleaving_policies, locations,
+outbox_events, processed_events, schema_migrations, station_trips, task_pool, zones`.
+
 ### Seed the local copies
 
-Normally Kafka fills the layout and the task pool. For a local walk-through you
-can insert them by hand (columns as in the migration); this is a development
-shortcut, not a supported interface:
+Normally Kafka fills the layout and the task pool: produce `ZoneRegistered`,
+`LocationSlotRegistered` and `LocationGeometryUpdated` to
+`warehouse.facility.events` and `TaskAvailable` to `warehouse.fulfillment.events`
+(the end-to-end test `cmd/api/e2e_integration_test.go` does exactly that, builds
+the CloudEvents and checks the hint that results). For a quick local look you
+can instead insert the copies by hand (columns as in the migration); this is a
+development shortcut, not a supported interface:
 
 ```sql
 INSERT INTO zones(zone_id, site_code, zone_code) VALUES ('z1', 'SITE-1', 'A');
@@ -154,7 +200,7 @@ INSERT INTO task_pool(task_id, task_type, site_id, from_location, to_location, s
          ('T-far','PICK','SITE-1','D','D','AVAILABLE');
 ```
 
-In Postgres mode `POST /recommendations` requires an `Idempotency-Key`:
+`POST /recommendations` requires an `Idempotency-Key` in every deployment:
 
 ```bash
 curl -s -X POST localhost:18080/recommendations -H 'Content-Type: application/json' \
@@ -176,26 +222,6 @@ key with another body (`"fromLocation":"B"`) is `422 idempotency-key-reused`;
 nothing: no hint, no outbox row.
 
 Stop the service with Ctrl-C and remove the container with `docker rm -f ti-pg`.
-
-## Wire Kafka (optional)
-
-The relay publishes the outbox and the consumers fill the copies. Point them at
-the fleet broker and choose stable group ids (the code has none):
-
-```bash
-export KAFKA_BROKERS=localhost:9092
-export FULFILLMENT_MODE=kafka FULFILLMENT_CONSUMER_GROUP=task-interleaving-fulfillment-dev
-export LAYOUT_MODE=kafka      LAYOUT_CONSUMER_GROUP=task-interleaving-layout-dev
-```
-
-With `DATABASE_URL` set the log adds `outbox relay running` and one `consumer
-running` line per consumer (`topic`, `group_id`, `brokers`). A fresh group
-replays its topic from the first offset, so the layout copy converges by itself.
-Create the two topics this service produces (`warehouse.task-interleaving.events`
-and `warehouse.task-interleaving.analytics`) first; see the
-[Runbook](/docs/operations/runbook#kafka). A mode set to `kafka` without its group,
-or without `KAFKA_BROKERS`, refuses to boot (messages in
-[Troubleshooting](/docs/operations/troubleshooting)).
 
 In a live cluster the pool only contains what fulfillment-execution announces:
 `TaskAvailable` is published today only for RELOCATE and REPLENISH tasks (see

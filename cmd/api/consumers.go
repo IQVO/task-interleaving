@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	inboundkafka "github.com/claudioed/task-interleaving/internal/adapters/inbound/kafka"
 	"github.com/claudioed/task-interleaving/internal/application/usecases"
@@ -131,8 +132,16 @@ func startConsumers(ad adapters, brokers []string, planned []plannedConsumer, lo
 	return workers
 }
 
+// consumerRestartDelay is how long a consumer waits before it is run again
+// after it stopped on a reader error.
+const consumerRestartDelay = time.Second
+
 // runConsumer runs one consumer in its own goroutine until its worker is
-// stopped.
+// stopped. The consumer is supervised: kafka-go hands a group-join failure
+// that outlasted its attempts (an unreachable broker) to FetchMessage, which
+// makes Run return; an always-on consumer must not die of that, so it is run
+// again after a short delay until the worker is stopped. The reader heals once
+// the broker is back and resumes from the committed offset.
 func runConsumer(consumer *inboundkafka.Consumer, p plannedConsumer, brokers []string, logger *slog.Logger) *worker {
 	return launch(p.env.modeEnv, func(ctx context.Context) {
 		defer func() {
@@ -141,8 +150,25 @@ func runConsumer(consumer *inboundkafka.Consumer, p plannedConsumer, brokers []s
 			}
 		}()
 		logger.Info("consumer running", "consumer", consumer.Name, "topic", consumer.Topic, "group_id", p.group, "brokers", brokers)
-		if err := consumer.Run(ctx); !errors.Is(err, context.Canceled) {
-			logger.Error("consumer stopped", "consumer", consumer.Name, "error", err)
-		}
+		supervise(ctx, consumer.Run, consumerRestartDelay, func(err error) {
+			logger.Error("consumer stopped; restarting", "consumer", consumer.Name, "error", err, "restart_in", consumerRestartDelay.String())
+		})
 	})
+}
+
+// supervise calls run until ctx is cancelled. When run returns for any other
+// reason, onStop is told why and run is called again after delay.
+func supervise(ctx context.Context, run func(context.Context) error, delay time.Duration, onStop func(error)) {
+	for {
+		err := run(ctx)
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return
+		}
+		onStop(err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
 }

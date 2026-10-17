@@ -1,10 +1,71 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 )
+
+// An always-on consumer is run again after it stopped on a reader error (an
+// unreachable broker), and stops for good only when its context is cancelled.
+func TestSuperviseRunsAgainAfterAReaderErrorUntilCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runs, stops := 0, 0
+	boom := errors.New("failed to dial")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		supervise(ctx, func(ctx context.Context) error {
+			runs++
+			if runs == 3 {
+				cancel()
+				return ctx.Err()
+			}
+			return boom
+		}, time.Millisecond, func(err error) {
+			stops++
+			if !errors.Is(err, boom) {
+				t.Errorf("onStop got %v", err)
+			}
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervise did not return after the context was cancelled")
+	}
+	if runs != 3 || stops != 2 {
+		t.Fatalf("runs = %d, stops = %d; want 3 runs and 2 reported stops", runs, stops)
+	}
+}
+
+// A run that ends because the context is cancelled is a clean stop: no
+// restart and nothing reported.
+func TestSuperviseStopsQuietlyWhenTheContextIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	supervise(ctx, func(ctx context.Context) error { return ctx.Err() }, time.Hour, func(err error) {
+		t.Errorf("a cancelled consumer must not be reported: %v", err)
+	})
+}
+
+// The wait between two runs is cut short by the cancellation.
+func TestSuperviseDoesNotWaitOutTheDelayWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		supervise(ctx, func(context.Context) error { return errors.New("down") }, time.Hour, func(error) { cancel() })
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervise sat out the restart delay after the cancellation")
+	}
+}
 
 // setConsumerEnv sets the mode and group variables of the two consumers.
 func setConsumerEnv(t *testing.T, mode, group string) {

@@ -39,7 +39,12 @@ runs on a real database and real Kafka, wired for real.
   them) but the default is `kafka`, and `permissive` is rejected at boot with
   `<NAME>=permissive is not supported: this context runs on real Kafka`. Any
   other value is a boot error. Dead-lettering, the shutdown guard and the offset
-  semantics (`FetchMessage` then `CommitMessages`) are unchanged.
+  semantics (`FetchMessage` then `CommitMessages`) are unchanged. A consumer is
+  also supervised: when kafka-go reports a group-join failure that outlasted its
+  attempts (an unreachable broker) `Run` returns, and the consumer is run again
+  after one second (log `consumer stopped; restarting`) until the service
+  stops, so a broker outage at any time never leaves a consumer dead while
+  `/readyz` turns green again.
 - **The expiry worker and the relay are always on.** `HINT_EXPIRY_INTERVAL`
   keeps its default of 5 s; `OUTBOX_MAX_ATTEMPTS` keeps its default of 20. A
   relay that cannot be built (no outbox store, no brokers) fails the boot. The
@@ -81,13 +86,16 @@ auto-creation off, before any topic exists:
 - Once infrastructure creates the topics the same process becomes ready and
   consumes from the first offset, with no restart.
 
-The relay writes with `Message.Topic`; a write to a topic that does not exist
-fails and the row's `attempts` grows (this repo's tests do not exercise that
-path). Rows at the cap (`OUTBOX_MAX_ATTEMPTS`, default 20) are kept and excluded
+The relay writes with `Message.Topic`; a write that cannot be delivered (a topic
+that does not exist, or an unreachable broker) fails and the row's `attempts`
+grows. Observed with the broker unreachable and the default 1 s interval: the
+first row reached the cap of 20 after about 20 s, the relay logged `row reached
+the attempt cap and is excluded from future claims` and left the row in
+`outbox_events`. Rows at the cap (`OUTBOX_MAX_ATTEMPTS`) are kept and excluded
 from claims; an operator re-arms them with `UPDATE outbox_events SET attempts =
-0 WHERE id = ...` once the topic exists. A topic that is missing long enough to
-exhaust the cap is an infrastructure incident, not something the service papers
-over.
+0 WHERE id = ...` once the cause is fixed. An outage longer than the cap times
+the relay interval is therefore an incident that needs that step; the cap is
+unchanged by this ADR.
 
 ## Consequences
 
