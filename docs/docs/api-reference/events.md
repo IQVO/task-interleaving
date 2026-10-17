@@ -44,7 +44,7 @@ the same station replaces it.
 
 | Type | Topic | Status |
 | --- | --- | --- |
-| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | verified on the producer's contract; announced for RELOCATE tasks only |
+| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | verified on the producer's contract; announced for RELOCATE and REPLENISH tasks only |
 | `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | verified on the producer's contract |
 | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | verified on the producer's contract |
 | `com.warehouse.wms.facility-layout.zone.ZoneRegistered` | `warehouse.facility.events` | verified on the producer's contract |

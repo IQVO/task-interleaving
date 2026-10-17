@@ -198,7 +198,7 @@ or without `KAFKA_BROKERS`, refuses to boot (messages in
 [Troubleshooting](/docs/operations/troubleshooting)).
 
 In a live cluster the pool only contains what fulfillment-execution announces:
-`TaskAvailable` is published today only for RELOCATE tasks (see
+`TaskAvailable` is published today only for RELOCATE and REPLENISH tasks (see
 [Integration](/docs/ecosystem/integration)).
 
 ## Drive the domain by hand
