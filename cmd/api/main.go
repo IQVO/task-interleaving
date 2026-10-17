@@ -9,9 +9,17 @@
 //	DATABASE_URL              Postgres DSN; unset = in-memory adapters (development)
 //	MIGRATIONS_DATABASE_URL   direct DSN for the boot migrations (default DATABASE_URL)
 //	KAFKA_BROKERS             comma-separated brokers; the outbox relay runs when this
-//	                          is set (and DATABASE_URL is)
+//	                          is set (and DATABASE_URL is); required by any *_MODE=kafka
 //	OUTBOX_RELAY_INTERVAL     relay poll interval (Go duration or seconds, default 1s)
 //	OUTBOX_MAX_ATTEMPTS       failures before the relay excludes a row (default 20, 0 = unlimited)
+//	FULFILLMENT_MODE, LAYOUT_MODE
+//	                          kafka | permissive (default permissive = consumer not started)
+//	FULFILLMENT_CONSUMER_GROUP, LAYOUT_CONSUMER_GROUP
+//	                          stable group ids; required when the mode is kafka
+//	                          (fulfillment-execution's TaskAvailable, TaskClaimed and
+//	                          TaskCompleted; facility-layout's zone, location and
+//	                          geometry events; ADR 0003). A bad mode, a missing group
+//	                          or missing KAFKA_BROKERS is a boot error
 //	HINT_EXPIRY_INTERVAL      how often hints past their expires_at are expired
 //	                          (Go duration, default 5s; a bad value is a boot error)
 //	SHUTDOWN_DRAIN_DELAY      wait after flipping /readyz before closing (default 5s)
@@ -55,6 +63,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	brokers := brokersFromEnv()
+	planned, err := planConsumers(consumerSpecs(), brokers)
+	if err != nil {
+		return err
+	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	// closeAdapters (pool.Close) is deferred FIRST so it runs LAST, after the
@@ -71,12 +84,14 @@ func run() error {
 		Handler:           inboundhttp.NewRouter(buildServer(ad, readiness)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	// Stop order: the expiry worker enqueues outbox rows, so the relay goes
-	// last and nothing committed before it is stranded.
-	workers := []*worker{
+	// Stop order: the consumers go first (they enqueue outbox rows while they
+	// drain), then the expiry worker (it enqueues rows too), and the relay
+	// last so nothing committed before it is stranded.
+	workers := startConsumers(ad, planned, brokers, databaseURL != "", logger)
+	workers = append(workers,
 		startExpiryWorker(ad.expireHints(), expiryEvery, logger),
-		startOutboxRelay(ad.outbox, brokersFromEnv(), logger),
-	}
+		startOutboxRelay(ad.outbox, brokers, logger),
+	)
 	return serveUntilSignal(logger, httpServer, readiness, workers)
 }
 

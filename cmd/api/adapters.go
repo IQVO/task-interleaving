@@ -93,6 +93,11 @@ func postgresAdapters(pgPool *pgxpool.Pool) adapters {
 	return ad
 }
 
+// intake is the claim-and-apply skeleton of every consumer use case.
+func (a adapters) intake() usecases.Intake {
+	return usecases.Intake{UoW: a.uow, Processed: a.processed}
+}
+
 // ranker is the pure recommender's view of the local copies, shared by the
 // read-only simulation and by the hint issuing use cases.
 func (a adapters) ranker() usecases.Ranker {

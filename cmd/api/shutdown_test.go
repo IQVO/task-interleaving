@@ -46,9 +46,10 @@ func recordingWorker(name string, order *[]string) *worker {
 }
 
 // The fleet shutdown order: SIGTERM flips /readyz, drains HTTP, then stops the
-// workers in the order given -- the expiry worker, which enqueues outbox rows,
-// before the relay. The test traps SIGTERM itself first so the signal can never
-// kill the test binary before serveUntilSignal has registered.
+// workers in the order given -- the consumers first, then the expiry worker,
+// which enqueues outbox rows, and the relay last. The test traps SIGTERM itself
+// first so the signal can never kill the test binary before serveUntilSignal
+// has registered.
 func TestServeUntilSignalShutsDownInOrder(t *testing.T) {
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
 	trap := make(chan os.Signal, 1)
@@ -58,11 +59,14 @@ func TestServeUntilSignalShutsDownInOrder(t *testing.T) {
 	readiness := &inboundhttp.Readiness{}
 	srv := &http.Server{Addr: freeAddr(t), Handler: http.NewServeMux(), ReadHeaderTimeout: time.Second}
 	var order []string
-	expiryW, relayW := recordingWorker("expiry", &order), recordingWorker("relay", &order)
+	workers := []*worker{
+		recordingWorker("fulfillment", &order), recordingWorker("layout", &order),
+		recordingWorker("expiry", &order), nil, recordingWorker("relay", &order),
+	}
 
 	result := make(chan error, 1)
 	go func() {
-		result <- serveUntilSignal(discardLogger(), srv, readiness, []*worker{expiryW, nil, relayW})
+		result <- serveUntilSignal(discardLogger(), srv, readiness, workers)
 	}()
 	waitListening(t, srv.Addr)
 
@@ -80,8 +84,8 @@ func TestServeUntilSignalShutsDownInOrder(t *testing.T) {
 	if readiness.Ready() {
 		t.Fatal("/readyz must be flipped to not-ready on shutdown")
 	}
-	if strings.Join(order, ",") != "expiry,relay" {
-		t.Fatalf("stop order = %v, want the expiry worker first and the relay last", order)
+	if strings.Join(order, ",") != "fulfillment,layout,expiry,relay" {
+		t.Fatalf("stop order = %v, want the consumers first, the expiry worker next and the relay last", order)
 	}
 }
 
