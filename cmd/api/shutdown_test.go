@@ -1,0 +1,104 @@
+package main
+
+import (
+	"errors"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	inboundhttp "github.com/claudioed/task-interleaving/internal/adapters/inbound/http"
+)
+
+func freeAddr(t *testing.T) string {
+	t.Helper()
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().String()
+}
+
+func waitListening(t *testing.T, addr string) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if c, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", addr); err == nil {
+			_ = c.Close()
+			return
+		}
+	}
+	t.Fatalf("%s never listened", addr)
+}
+
+// recordingWorker is a worker whose stop records its name in order.
+func recordingWorker(name string, order *[]string) *worker {
+	w := &worker{name: name, done: make(chan struct{})}
+	w.stop = func() {
+		*order = append(*order, name)
+		close(w.done)
+	}
+	return w
+}
+
+// The fleet shutdown order: SIGTERM flips /readyz, drains HTTP, then stops the
+// workers in the order given -- the expiry worker, which enqueues outbox rows,
+// before the relay. The test traps SIGTERM itself first so the signal can never
+// kill the test binary before serveUntilSignal has registered.
+func TestServeUntilSignalShutsDownInOrder(t *testing.T) {
+	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
+	trap := make(chan os.Signal, 1)
+	signal.Notify(trap, syscall.SIGTERM)
+	defer signal.Stop(trap)
+
+	readiness := &inboundhttp.Readiness{}
+	srv := &http.Server{Addr: freeAddr(t), Handler: http.NewServeMux(), ReadHeaderTimeout: time.Second}
+	var order []string
+	expiryW, relayW := recordingWorker("expiry", &order), recordingWorker("relay", &order)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- serveUntilSignal(discardLogger(), srv, readiness, []*worker{expiryW, nil, relayW})
+	}()
+	waitListening(t, srv.Addr)
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("shutdown error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serveUntilSignal did not return after SIGTERM")
+	}
+	if readiness.Ready() {
+		t.Fatal("/readyz must be flipped to not-ready on shutdown")
+	}
+	if strings.Join(order, ",") != "expiry,relay" {
+		t.Fatalf("stop order = %v, want the expiry worker first and the relay last", order)
+	}
+}
+
+func TestServeUntilSignalReturnsAListenError(t *testing.T) {
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	srv := &http.Server{Addr: l.Addr().String(), Handler: http.NewServeMux(), ReadHeaderTimeout: time.Second}
+	var order []string
+	err = serveUntilSignal(discardLogger(), srv, &inboundhttp.Readiness{},
+		[]*worker{recordingWorker("expiry", &order), recordingWorker("relay", &order)})
+	if err == nil || errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("want the listen error, got %v", err)
+	}
+	if strings.Join(order, ",") != "expiry,relay" {
+		t.Fatalf("stopped = %v: the workers must be stopped when the server cannot listen", order)
+	}
+}
