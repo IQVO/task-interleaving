@@ -173,9 +173,10 @@ harness-test: ## unit-test the agent hooks (pre/post/stop)
 
 # --- local run on the real infrastructure (ADR 0006) --------------------------
 # There is no in-memory mode: the service needs Postgres and Kafka. These
-# targets bring both up with docker-compose.yml (a job creates the four topics:
-# the service never creates topics) and run the service on them. Host ports
-# 5432 and 9092 must be free.
+# targets bring both up with docker-compose.yml (a job pre-creates the four
+# topics locally; on the cluster the broker auto-creates them on first write
+# and the service never creates topics through an admin API) and run the
+# service on them. Host ports 5432 and 9092 must be free.
 .PHONY: local-up local-down run-local
 LOCAL_DATABASE_URL ?= postgres://ti:ti@localhost:5432/ti?sslmode=disable
 LOCAL_KAFKA_BROKERS ?= localhost:9092

@@ -17,6 +17,14 @@ transactional outbox. It consumes `warehouse.fulfillment.events` and
 `docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`. Fleet naming:
 `warehouse.<context>.events` (integration) and `warehouse.<context>.analytics`.
 
+Topics follow the fleet convention (warehouse-infra's Kafka Terraform): the
+cluster broker auto-creates every business topic on first write and
+infrastructure declares none, so the relay's Writer sets
+`AllowAutoTopicCreation: true` (`TestNewWriterAllowsAutoTopicCreation`). The
+service never calls a topic-admin API. `/readyz` needs Postgres and a Kafka
+broker answering a topic-less metadata request, never topics (ADR 0006
+Amendment 1); a missing consumed topic shows as consumer retry logs.
+
 ## Events: CloudEvents 1.0 is MANDATORY
 
 Every Kafka message this service produces or consumes (integration
@@ -152,9 +160,10 @@ copies converge. If a consumer ever replays from FirstOffset on every start to
 build an in-memory read model, its group id must additionally be UNIQUE PER
 PROCESS INSTANCE (hostname+PID+timestamp).
 
-The service never creates topics: infrastructure owns them, and a missing one
-keeps `/readyz` at 503 while the consumers retry (a failed reader is run again
-after 1 s). There is no in-memory runtime: `cmd/**` must not import
+The service never creates topics through an admin API: the broker auto-creates
+them on first write, and a missing consumed topic shows as consumer retry logs
+while the consumers retry, never as a `/readyz` failure (a failed reader is run
+again after 1 s). There is no in-memory runtime: `cmd/**` must not import
 `internal/adapters/outbound/memory` (`TestRuntimeBinaryHasNoInMemoryAdapters`).
 
 Failure handling: each message is fetched, handled in ONE transaction together
