@@ -17,3 +17,4 @@ one. The *Status* column is copied from each ADR's own `## Status` section.
 | [0002](/docs/adr/0002-stationtrip-and-policy-aggregates) | the StationTrip and InterleavingPolicy aggregates, the recommender and the policy ports | Accepted (2026-10-17) |
 | [0003](/docs/adr/0003-local-copies-and-consumed-contracts) | event-fed local copies and the consumed contracts | Accepted (2026-10-17) |
 | [0004](/docs/adr/0004-cloudevents-envelope-and-type-catalogue) | CloudEvents envelope and type catalogue | Accepted (2026-10-17) |
+| [0005](/docs/adr/0005-persistence-and-evaluation-semantics) | persistence and evaluation semantics | Accepted (2026-10-17) |
