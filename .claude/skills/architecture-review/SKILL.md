@@ -5,8 +5,6 @@ disable-model-invocation: true
 argument-hint: "[git range]"
 ---
 
-<!-- TEMPLATE NOTE (warehouse-harness-template v2): adapt every repo-specific example in this file (file paths, type names, field names) to THIS repo real code. Do not copy-paste verbatim. -->
-
 Perform a bounded-context boundary and ADR-compliance review of the
 current changes (or `$ARGUMENTS` if given, e.g. a branch/PR diff range).
 
@@ -18,55 +16,51 @@ check a design decision against this fleet's standing architecture.
 
 ## What to check, in priority order
 
-1. **Hexagonal dependency direction.** Domain depends on nothing;
-   application depends on domain+ports; adapters depend on
-   application+domain; only `cmd/` wires every layer together. Run
-   `go test ./internal/architecture/... -v` first — if it's already red,
-   report that and stop; don't hand-review what a fitness test already
-   caught.
-2. **Customer/Supplier direction, per `.claude/rules/domain-model.md`
-   (or this repo's equivalent doc).** A new outbound call to a sibling
-   context must go the direction ADRs already established — check
-   `docs/docs/adr/` for the relevant context-mapping ADR before assuming
-   a new integration is fine. Flag any outbound call added to a context
-   this repo doesn't already integrate with; that's a new architectural
-   decision that needs its own ADR, not a code change slipped in
-   silently.
-3. **MCP additive-boundary rule (ADR-0008 fleet-wide).** A change under
-   `internal/adapters/inbound/mcp/` must depend only on
-   application/domain, and nothing else in the codebase may depend on
-   it. If this repo has a `TestMCPAdapterDependencyRule` fitness test,
-   confirm it's green; if not, check by eye.
-2b. **Zero-write guardrails, where applicable.** If this repo has a
-   documented zero-write constraint (e.g. warehouse-ops-agent v1), check
-   no mutating HTTP method or MCP tool without `ReadOnlyHint: true` was
-   added to an outbound/inbound surface bound by that constraint.
-4. **Analytics isolation (ADR-0006-style, where this repo has an
-   `internal/analytics/` read side).** The OLTP domain/application layers
-   must never import the analytics store or read model; the analytics
-   side must depend on nothing internal except itself. This is a real,
-   already-fitness-tested rule in most repos — confirm the test exists
-   and is green rather than re-deriving it by eye if possible.
-5. **Kafka consumer-group pattern correctness.** A new Kafka consumer
-   must use either (a) a named long-lived constant for a genuinely
-   single-instance consumer, or (b) a per-process-unique generated group
-   id for an event-sourced local-cache consumer that replays full
-   history on every start. Flag any new consumer whose pattern doesn't
-   match its actual replay behavior — this is a correctness bug, not a
-   style issue (see this repo's `.claude/skills/how-to-add-an-integration-event/SKILL.md`
-   for the two patterns and the incident that taught this fleet the
-   difference).
-6. **A new bounded-context integration with no companion documentation.**
-   If this change introduces or changes a cross-repo contract (a new
-   REST call, a new Kafka topic subscription, a new MCP tool consumed by
-   a sibling), check whether an ADR documents the decision — and whether
-   a companion ADR should exist in the OTHER repo too, per this fleet's
-   companion-ADR convention (see `.claude/skills/how-to-write-an-adr/SKILL.md`).
-7. **Auth-reintroduction and sibling-call bans**, same as `/code-review`
-   items 6-8, but reasoned about more thoroughly here — check not just
-   "is there a Bearer literal" but "does this change's INTENT require
-   re-litigating the fleet-wide auth-removal decision," which would need
-   its own ADR, not a silent code change.
+1. **Hexagonal dependency direction.** Domain (`internal/domain/policy`,
+   `travel`, `recommend`, `stationtrip`) depends on nothing internal but the
+   domain; the application layer (built in wave 2) depends on domain + ports;
+   adapters depend on application + domain and never on each other; only the
+   `cmd/` wiring (wave 2) assembles every layer. Run
+   `go test ./internal/architecture/... -v` first
+   (`TestHexagonalArchitecture`) — if it's already red, report that and stop;
+   don't hand-review what a fitness test already caught.
+2. **Context map and exclusions, per `docs/adr/0001-task-interleaving-bounded-context.md`.**
+   task-interleaving is a Supporting-subdomain **advisor**: it is a Conformist
+   to facility-layout and fulfillment-execution (consumed Published Languages)
+   and publishes `InterleavingHintIssued` back. A new outbound call to a
+   sibling context, a live cross-context lookup, or anything that assigns work
+   to a worker (instead of advising) contradicts ADR 0001. Flag it: it needs its
+   own ADR, not a code change slipped in silently.
+3. **Local-copy contract, per `docs/adr/0003-local-copies-and-consumed-contracts.md`.**
+   Consumed types must match the producers' `apis/asyncapi.yaml` byte-for-byte
+   and stay in the ADR 0003 and ADR 0004 tables; `TaskAvailable` and
+   `TaskClaimed` are pending producer change P2 and must not be assumed live.
+   Copies converge from events only, with the `*_MODE` switches defaulting to
+   `permissive`.
+4. **MCP additive-boundary rule (fleet-wide).** A change in an MCP inbound
+   adapter must depend only on application/domain, and nothing else may depend
+   on it. `TestMCPAdapterDependencyRule` in `internal/architecture` encodes it;
+   confirm it's green. There is no MCP adapter in this repo yet.
+5. **Pure recommender and replaceable travel model, per `docs/adr/0002-stationtrip-and-policy-aggregates.md`.**
+   `recommend.Recommend` must stay free of I/O, clock and randomness; a new
+   travel model sits behind `travel.Model` with its own ADR and is selected per
+   policy, not hard-coded in the recommender.
+6. **Kafka consumer-group pattern correctness.** The two consumers (fulfillment,
+   layout) are stable process-and-commit consumers: group id from
+   `FULFILLMENT_CONSUMER_GROUP` / `LAYOUT_CONSUMER_GROUP`, never a literal
+   (`TestKafkaConsumerGroupNeverHardcodedInline`). A consumer that instead
+   replays full history on every start needs a per-process-unique group id. Flag
+   any consumer whose pattern doesn't match its actual replay behavior — this is
+   a correctness bug (see `.claude/skills/how-to-add-an-integration-event/SKILL.md`).
+7. **A new cross-repo contract with no companion documentation.** If the change
+   introduces or alters a cross-repo contract (a new REST call, a new topic
+   subscription, a new published type), check that an ADR documents the decision
+   and whether a companion ADR is needed in the OTHER repo (see
+   `.claude/skills/how-to-write-an-adr/SKILL.md`).
+8. **Auth-reintroduction and sibling-call bans**, same as `/code-review`
+   items 6-8, reasoned about more thoroughly: not just "is there a Bearer
+   literal" but "does this change's INTENT require re-litigating the fleet-wide
+   auth-removal decision", which needs its own ADR.
 
 ## Output format
 
@@ -78,6 +72,6 @@ finding with no citation is not actionable.
 
 This is advisory. It never blocks a merge on its own, and it never
 modifies files. If a finding conflicts with a decision explicitly stated
-in this repo's own AGENTS.md/CLAUDE.md, defer to that document and say
-so — this command reasons about the fleet's general conventions, not a
-higher authority than the repo's own explicit guidance.
+in this repo's own accepted ADRs, defer to the ADR and say so — this
+command reasons about the fleet's general conventions, not a higher
+authority than the repo's own explicit guidance.
