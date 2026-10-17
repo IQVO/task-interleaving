@@ -203,7 +203,9 @@ func TestExpireKeepsGoingAfterAFailure(t *testing.T) {
 	e.seedHinted(t)
 	// a second station with its own hint
 	mustNil(t, e.pool.Save(bg, repositoryTask("T9", "STN-2")))
-	if _, err := e.completed().Handle(bg, "evt-9", usecases.TaskCompletion{TaskID: "T9"}); err != nil {
+	second := e.completed()
+	second.IDs = &seqIDs{n: 1} // hint-2: a hint id belongs to one station
+	if _, err := second.Handle(bg, "evt-9", usecases.TaskCompletion{TaskID: "T9"}); err != nil {
 		t.Fatal(err)
 	}
 	e.failNth("StationTripRepo.Save", 1)

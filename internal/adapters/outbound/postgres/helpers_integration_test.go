@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/claudioed/task-interleaving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/task-interleaving/internal/application/repository"
 	"github.com/claudioed/task-interleaving/internal/domain/stationtrip"
@@ -125,7 +123,8 @@ func (failingSink) PublishPolicyDeclared(context.Context, repository.PolicyDecla
 
 // stores are the Postgres adapters over one database.
 type stores struct {
-	pool      *pgxpool.Pool
+	exec      func(sql string, args ...any) error
+	indexDef  func(name string) string
 	policies  *postgres.PolicyRepo
 	trips     *postgres.StationTripRepo
 	tasks     *postgres.TaskPool
@@ -139,7 +138,8 @@ func newStores(t *testing.T) stores {
 	t.Helper()
 	pool := pgtest.NewPool(t)
 	return stores{
-		pool:      pool,
+		exec:      func(sql string, args ...any) error { return pgtest.Exec(pool, sql, args...) },
+		indexDef:  func(name string) string { return pgtest.IndexDef(t, pool, name) },
 		policies:  postgres.NewPolicyRepo(pool),
 		trips:     postgres.NewStationTripRepo(pool),
 		tasks:     postgres.NewTaskPool(pool),

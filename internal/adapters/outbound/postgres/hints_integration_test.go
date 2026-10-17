@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/claudioed/task-interleaving/internal/application/repository"
 	"github.com/claudioed/task-interleaving/internal/domain/stationtrip"
+	"github.com/claudioed/task-interleaving/internal/testing/pgtest"
 	"github.com/claudioed/task-interleaving/internal/testing/repocontract"
 )
 
@@ -22,17 +21,15 @@ const activeHintIndex = "uq_hints_one_active_per_station"
 // insertHintRow writes one hint row directly, bypassing the repository, so the
 // test exercises the database's own rule.
 func insertHintRow(s stores, id, station, state string) error {
-	_, err := s.pool.Exec(context.Background(), `
+	return s.exec(`
 		INSERT INTO hints (hint_id, station_id, site_id, after_task_id, origin_location,
 		                   issued_at, expires_at, policy_version, state, version)
 		VALUES ($1, $2, 'SITE-1', 'task-0', 'LOC-0', $3, $4, 1, $5, 1)
 	`, id, station, repocontract.T0, repocontract.T0.Add(time.Minute), state)
-	return err
 }
 
 func isActiveHintViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == activeHintIndex
+	return pgtest.IsUniqueViolation(err, activeHintIndex)
 }
 
 // TestTheDatabaseAdmitsOneActiveHintPerStation proves the partial unique index,
@@ -64,12 +61,7 @@ func TestTheDatabaseAdmitsOneActiveHintPerStation(t *testing.T) {
 
 func TestTheActiveHintIndexIsPartialAndPerStation(t *testing.T) {
 	s := newStores(t)
-	var def string
-	err := s.pool.QueryRow(context.Background(),
-		`SELECT indexdef FROM pg_indexes WHERE indexname = $1`, activeHintIndex).Scan(&def)
-	if err != nil {
-		t.Fatalf("the index must exist: %v", err)
-	}
+	def := s.indexDef(activeHintIndex)
 	for _, want := range []string{"UNIQUE", "(station_id)", "state = 'Active'"} {
 		if !strings.Contains(def, want) {
 			t.Fatalf("index definition %q lacks %q", def, want)
@@ -108,7 +100,7 @@ func TestAHintCannotBeReopenedBesideAnActiveOne(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, err := s.pool.Exec(context.Background(), `UPDATE hints SET state = 'Active' WHERE hint_id = 'hint-1'`)
+	err := s.exec(`UPDATE hints SET state = 'Active' WHERE hint_id = 'hint-1'`)
 	if !isActiveHintViolation(err) {
 		t.Fatalf("reopening beside an Active hint: %v", err)
 	}
