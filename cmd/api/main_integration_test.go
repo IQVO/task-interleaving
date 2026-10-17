@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,14 +14,82 @@ import (
 	"time"
 
 	inboundhttp "github.com/claudioed/task-interleaving/internal/adapters/inbound/http"
+	"github.com/claudioed/task-interleaving/internal/application/repository"
+	"github.com/claudioed/task-interleaving/internal/application/usecases"
+	"github.com/claudioed/task-interleaving/internal/testing/kafkatest"
 	"github.com/claudioed/task-interleaving/internal/testing/pgtest"
 )
 
 // The infrastructure comes from testcontainers, never from the environment.
 func TestMain(m *testing.M) {
 	code := m.Run()
+	kafkatest.Shutdown()
 	pgtest.Shutdown()
 	os.Exit(code)
+}
+
+const (
+	declareBody = `{"maxDetourM":25,"maxCandidates":3,"hintTtlSeconds":1,"eligibleTaskTypes":["PICK"]}`
+	simulation  = `{"stationId":"STN-07","fromLocation":"A-01"}`
+)
+
+func do(t *testing.T, method, url, body string, headers ...string) (int, string, http.Header) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(raw), resp.Header
+}
+
+// seedWorld gives SITE-1 a layout and an open-task pool through the ports, as
+// the consumers will: from A-01 (0,0,0) the task at B-01 is 4 m away.
+func seedWorld(t *testing.T, ad adapters) {
+	t.Helper()
+	ctx := t.Context()
+	steps := []error{
+		ad.book.SaveZone(ctx, repository.Zone{ID: "z1", SiteCode: "SITE-1", ZoneCode: "FWD"}),
+		ad.book.SaveLocation(ctx, "A-01", "z1"),
+		ad.book.SaveGeometry(ctx, "A-01", 0, 0, 0),
+		ad.book.SaveLocation(ctx, "B-01", "z1"),
+		ad.book.SaveGeometry(ctx, "B-01", 4, 0, 0),
+		ad.pool.Save(ctx, repository.Task{ID: "task-9c2e", Type: "PICK", SiteID: "SITE-1", FromLocation: "B-01", ToLocation: "B-01", State: repository.TaskAvailable}),
+	}
+	for _, err := range steps {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// completeTask records that STN-07 completed task (claimed by it, ending at
+// A-01) through the same use case the fulfillment consumer calls.
+func completeTask(t *testing.T, ad adapters, task string) {
+	t.Helper()
+	ctx := t.Context()
+	err := ad.pool.Save(ctx, repository.Task{
+		ID: task, Type: "PICK", SiteID: "SITE-1", FromLocation: "A-01", ToLocation: "A-01",
+		State: repository.TaskClaimed, ClaimedBy: "STN-07",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := &usecases.ApplyTaskCompleted{
+		Intake: usecases.Intake{UoW: ad.uow, Processed: ad.processed}, TripWriter: ad.tripWriter(),
+		Policies: ad.policies, Pool: ad.pool, Ranker: ad.ranker(), Clock: ad.clock, IDs: ad.ids,
+	}
+	if out, err := uc.Handle(ctx, "evt-"+task, usecases.TaskCompletion{TaskID: task}); err != nil || out != usecases.OutcomeApplied {
+		t.Fatalf("completion = %s %v", out, err)
+	}
 }
 
 // pgService is the service booted over a real Postgres.
@@ -67,8 +136,8 @@ func (s pgService) simulate(t *testing.T, body, key string) (int, string, http.H
 
 func TestPostgresModeMigratesEnforcesIdempotencyAndWritesNoOutboxForTheSimulation(t *testing.T) {
 	svc := bootPostgres(t)
-	if svc.ad.outbox == nil || svc.ad.idempotency == nil {
-		t.Fatal("postgres mode wires the outbox store and the idempotency middleware")
+	if svc.ad.outbox == nil || svc.ad.idempotency == nil || svc.ad.ping == nil {
+		t.Fatal("the service wires the outbox store, the idempotency middleware and the postgres ping")
 	}
 	svc.declare(t)
 	if status, body, _ := svc.simulate(t, simulation, ""); status != http.StatusBadRequest || !strings.Contains(body, "idempotency-key-required") {

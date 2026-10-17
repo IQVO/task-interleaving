@@ -11,38 +11,86 @@ import (
 	"github.com/claudioed/task-interleaving/internal/application/usecases"
 )
 
-// Consumer modes (FULFILLMENT_MODE, LAYOUT_MODE).
+// Consumer modes (FULFILLMENT_MODE, LAYOUT_MODE). The variables stay (the
+// fleet docs and the template rule files name them) but there is one runtime:
+// every consumer reads real Kafka. "permissive" used to mean "do not start
+// this consumer"; it is rejected at boot.
 const (
-	modePermissive = "permissive"
 	modeKafka      = "kafka"
+	modePermissive = "permissive"
 )
 
-// parseConsumerMode validates a *_MODE value (empty and "permissive" = no
-// consumer: the local copies are whatever the database holds).
+// parseConsumerMode validates a *_MODE value: unset or "kafka" is the one
+// supported mode, "permissive" is refused with its own message and anything
+// else is unknown.
 func parseConsumerMode(name, raw string) (string, error) {
-	switch raw {
-	case "", modePermissive:
-		return modePermissive, nil
-	case modeKafka:
+	if raw == "" || raw == modeKafka {
 		return modeKafka, nil
-	default:
-		return "", fmt.Errorf("unknown %s %q (want kafka or permissive)", name, raw)
 	}
+	if raw == modePermissive {
+		return "", fmt.Errorf("%s=permissive is not supported: this context runs on real Kafka", name)
+	}
+	return "", fmt.Errorf("unknown %s %q (want kafka)", name, raw)
 }
 
-// consumerSpec is one consumer: its mode and group variables and how to build
-// it once both are resolved and the adapters exist.
-type consumerSpec struct {
+// consumerEnv names the two variables of one consumer.
+type consumerEnv struct {
 	modeEnv, groupEnv string
-	build             func(ad adapters, brokers []string, group string, logger *slog.Logger) *inboundkafka.Consumer
 }
 
-// consumerSpecs lists the two consumers (ADR 0003). The group ids come from
-// the environment, never from a literal.
-func consumerSpecs() []consumerSpec {
-	return []consumerSpec{
-		{"FULFILLMENT_MODE", "FULFILLMENT_CONSUMER_GROUP", buildFulfillmentConsumer},
-		{"LAYOUT_MODE", "LAYOUT_CONSUMER_GROUP", buildLayoutConsumer},
+// consumerEnvs lists the two consumers (ADR 0003). The group ids come from the
+// environment, never from a literal.
+var consumerEnvs = []consumerEnv{
+	{"FULFILLMENT_MODE", "FULFILLMENT_CONSUMER_GROUP"},
+	{"LAYOUT_MODE", "LAYOUT_CONSUMER_GROUP"},
+}
+
+// plannedConsumer is a consumer with its resolved group.
+type plannedConsumer struct {
+	env   consumerEnv
+	group string
+}
+
+// planConsumers resolves every consumer's mode and group from the environment
+// and refuses to boot on a misconfiguration: a mode other than kafka, or a
+// missing group variable. Every problem is reported, not only the first.
+func planConsumers() ([]plannedConsumer, error) {
+	planned := make([]plannedConsumer, 0, len(consumerEnvs))
+	var errs []error
+	for _, env := range consumerEnvs {
+		p, err := planConsumer(env)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		planned = append(planned, p)
+	}
+	return planned, errors.Join(errs...)
+}
+
+func planConsumer(env consumerEnv) (plannedConsumer, error) {
+	if _, err := parseConsumerMode(env.modeEnv, os.Getenv(env.modeEnv)); err != nil {
+		return plannedConsumer{}, err
+	}
+	group := os.Getenv(env.groupEnv)
+	if group == "" {
+		return plannedConsumer{}, fmt.Errorf("%s is required: this context runs on real Kafka", env.groupEnv)
+	}
+	return plannedConsumer{env: env, group: group}, nil
+}
+
+// consumerBuilder builds one consumer once its group is resolved.
+type consumerBuilder func(brokers []string, group string, logger *slog.Logger) *inboundkafka.Consumer
+
+// consumerBuilders maps each consumer's mode variable to its builder.
+func consumerBuilders(ad adapters) map[string]consumerBuilder {
+	return map[string]consumerBuilder{
+		"FULFILLMENT_MODE": func(brokers []string, group string, logger *slog.Logger) *inboundkafka.Consumer {
+			return buildFulfillmentConsumer(ad, brokers, group, logger)
+		},
+		"LAYOUT_MODE": func(brokers []string, group string, logger *slog.Logger) *inboundkafka.Consumer {
+			return buildLayoutConsumer(ad, brokers, group, logger)
+		},
 	}
 }
 
@@ -68,55 +116,17 @@ func buildLayoutConsumer(ad adapters, brokers []string, group string, logger *sl
 	}, logger)
 }
 
-// plannedConsumer is a consumer whose mode is kafka, with its resolved group.
-type plannedConsumer struct {
-	spec  consumerSpec
-	group string
-}
-
-// planConsumers resolves every consumer's mode and group from the environment
-// and refuses to boot on a misconfiguration: an unknown mode, or mode kafka
-// without its group variable or without KAFKA_BROKERS. It needs no adapter, so
-// run() calls it before any database is dialled.
-func planConsumers(specs []consumerSpec, brokers []string) ([]plannedConsumer, error) {
-	var planned []plannedConsumer
-	for _, spec := range specs {
-		mode, err := parseConsumerMode(spec.modeEnv, os.Getenv(spec.modeEnv))
-		if err != nil {
-			return nil, err
-		}
-		if mode != modeKafka {
-			continue
-		}
-		group := os.Getenv(spec.groupEnv)
-		if group == "" {
-			return nil, fmt.Errorf("%s=kafka requires %s", spec.modeEnv, spec.groupEnv)
-		}
-		planned = append(planned, plannedConsumer{spec: spec, group: group})
-	}
-	if len(planned) > 0 && len(brokers) == 0 {
-		return nil, errors.New("a consumer in kafka mode requires KAFKA_BROKERS")
-	}
-	return planned, nil
-}
-
 // startConsumers starts every planned consumer in its own worker. The readers
-// dial lazily inside Run, so a broker outage never blocks boot; each worker
-// closes its own reader and dead-letter writer once Run has returned. durable
-// reports whether the local copies live in a database: in-memory copies are
-// lost on restart while the committed offsets are not, so that combination is
-// warned about.
-func startConsumers(ad adapters, planned []plannedConsumer, brokers []string, durable bool, logger *slog.Logger) []*worker {
-	if len(planned) == 0 {
-		logger.Info("no consumer is in kafka mode; the local copies are whatever the database holds")
-		return nil
-	}
-	if !durable {
-		logger.Warn("consumers run over in-memory adapters (DATABASE_URL is not set): the local copies are lost on restart while the committed offsets are kept")
-	}
+// dial lazily inside Run, so a broker outage (or a topic that does not exist
+// yet) never blocks boot or crashes the process: the consumer logs and
+// retries, and /readyz reports not-ready until the broker and its topics are
+// there. Each worker closes its own reader and dead-letter writer once Run has
+// returned.
+func startConsumers(ad adapters, brokers []string, planned []plannedConsumer, logger *slog.Logger) []*worker {
+	builders := consumerBuilders(ad)
 	workers := make([]*worker, 0, len(planned))
 	for _, p := range planned {
-		workers = append(workers, runConsumer(p.spec.build(ad, brokers, p.group, logger), p, brokers, logger))
+		workers = append(workers, runConsumer(builders[p.env.modeEnv](brokers, p.group, logger), p, brokers, logger))
 	}
 	return workers
 }
@@ -124,7 +134,7 @@ func startConsumers(ad adapters, planned []plannedConsumer, brokers []string, du
 // runConsumer runs one consumer in its own goroutine until its worker is
 // stopped.
 func runConsumer(consumer *inboundkafka.Consumer, p plannedConsumer, brokers []string, logger *slog.Logger) *worker {
-	return launch(p.spec.modeEnv, func(ctx context.Context) {
+	return launch(p.env.modeEnv, func(ctx context.Context) {
 		defer func() {
 			if err := consumer.Close(); err != nil {
 				logger.Error("consumer close failed", "consumer", consumer.Name, "error", err)
