@@ -12,7 +12,8 @@ every edge**. Three words are used strictly:
 
 - **Built**: code on this repo's `origin/develop` that does the job.
 - **Verified**: the other side was read on its own `origin/develop`
-  (`fulfillment-execution` at `7f113ed`, `facility-layout` at `4518c60`,
+  (`fulfillment-execution` at `453212b`, which includes its PR #221 (ADR 0050),
+  `facility-layout` at `4518c60`,
   `warehouse-infra` at `61f9e7a`, fetched 2026-10-17) and matches.
 - **Absent**: no code on either side.
 
@@ -46,20 +47,32 @@ on both sides. Dotted edges have code on one side only.
 | Producer | Protocol | Topic | Contract (full `type`) | Status |
 | --- | --- | --- | --- | --- |
 | fulfillment-execution | Kafka, CloudEvents 1.0 | `warehouse.fulfillment.events` | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted`: reads `task_id`, `station_id` | **Built + verified.** Present in the producer's `apis/asyncapi.yaml`; `station_id` is a required field of its payload. |
-| fulfillment-execution | same | same | `...task.TaskAvailable`: reads `task_id, task_type, site_id, from_location, to_location, required_capabilities[], priority_band` (ignores `cpt`, `available_at`) | **Built + verified.** The producer publishes it since its ADR 0049 (commit `257a567`). **Only RELOCATE tasks are announced today**: the producer's AsyncAPI says a PICK, PACK, SLAM or REBIN task "has no location in this service" and is not announced (`apis/asyncapi.yaml` of fulfillment-execution, TaskAvailable description). |
+| fulfillment-execution | same | same | `...task.TaskAvailable`: reads `task_id, task_type, site_id, from_location, to_location, required_capabilities[], priority_band` (ignores `cpt`, `available_at`) | **Built + verified.** The producer publishes it since its ADR 0049 (commit `257a567`) and, since its ADR 0050 (PR #221), also for REPLENISH tasks. **Only RELOCATE and REPLENISH tasks are announced today**: the producer's AsyncAPI says "today only RELOCATE and REPLENISH tasks carry bins, so only they are announced", and that a PICK, PACK, SLAM, REBIN or transfer task "has no location in this service" and is not announced (`apis/asyncapi.yaml` of fulfillment-execution, TaskAvailable description). A REPLENISH task is announced with `from_location` = the source (reserve) bin and `to_location` = the destination (pick face) bin (its ADR 0050, section 6). |
 | fulfillment-execution | same | same | `...task.TaskClaimed`: reads `task_id, task_type, station_id, claimed_at` | **Built + verified.** Published on the integration topic for every task type, with `claimed_at`. (The analytics-topic `TaskClaimed` is a separate, older row.) |
 | facility-layout | Kafka, CloudEvents 1.0 | `warehouse.facility.events` | `com.warehouse.wms.facility-layout.zone.ZoneRegistered` (`zoneId`, `siteCode`, `zoneCode`) | **Built + verified** in the producer's `apis/asyncapi.yaml`. |
 | facility-layout | same | same | `...locationslot.LocationSlotRegistered` (`locationCode`, `zoneId`) | **Built + verified.** |
 | facility-layout | same | same | `...locationslot.LocationSlotDecommissioned` (`locationCode`) | **Built + verified.** |
 | facility-layout | same | same | `...locationslot.LocationGeometryUpdated` (`locationCode`, `xM`, `yM`, `zM`) | **Built + verified.** The producer's AsyncAPI notes "No consumer wired today" for this message; this service is that consumer, once enabled. |
 
-Consequence of the RELOCATE-only announcement: in a live cluster the open-task
-pool, and therefore every candidate list, contains **RELOCATE tasks only**, and a
-station's position is only recorded when it completes an announced (RELOCATE)
-task, because the position is read from the pool copy's `to_location`. A
-completion of any other task type is recorded as completed and ignored (outcome
-`ignored`). The policy's other eligible task types have no effect until the
-producer announces more types.
+Consequence of the announcement scope (RELOCATE and REPLENISH only): in a live
+cluster the open-task pool, and therefore every candidate list, contains
+**RELOCATE and REPLENISH tasks only**. A candidate is listed at its
+`from_location` (for a REPLENISH task the reserve bin), and a station's
+position is only recorded when it completes an announced task, because the
+position is read from the pool copy's `to_location` (for a REPLENISH task the
+destination pick-face bin). A completion of any other task type (PICK, PACK, SLAM, REBIN)
+is recorded as completed and ignored (outcome `ignored`). The policy's other
+eligible task types (`PICK`, `PACK`, `REBIN`, `SLAM`) have no effect until the
+producer announces them.
+
+**Status since the ADRs.** ADR 0001, ADR 0003 and ADR 0004 (bodies unchanged, they
+are immutable) mark the consumed `TaskAvailable` and `TaskClaimed` rows as
+"pending producer change P2". That is no longer true: both are published by
+fulfillment-execution on `origin/develop` (`TaskAvailable` by its ADR 0049 for
+RELOCATE, extended to REPLENISH by its ADR 0050; `TaskClaimed` for every task
+type), so the pool is no longer empty when `FULFILLMENT_MODE=kafka` is enabled and
+the producers run. What stays open is the hint consumer (below) and the
+announcement of PICK, PACK, SLAM and REBIN tasks.
 
 ### How every consumed message is handled
 
@@ -94,7 +107,7 @@ producer announces more types.
 
 | Consumer | Protocol | Topic | Contract | Status |
 | --- | --- | --- | --- | --- |
-| fulfillment-execution (intended) | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.events` | `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | **Published, not consumed.** This service writes it (outbox + relay, key = station id). fulfillment-execution's `origin/develop` has no code that reads the topic or the type; its ADR 0049 lists "consuming `InterleavingHintIssued`" as out of scope. Nothing on the floor changes until that consumer exists. |
+| fulfillment-execution (intended) | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.events` | `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | **Published, not consumed.** This service writes it (outbox + relay, key = station id). fulfillment-execution's `origin/develop` has no code that reads the topic or the type; its ADR 0049 and ADR 0050 list "consuming `InterleavingHintIssued`" as out of scope. Nothing on the floor changes until that consumer exists. |
 | analytics read side | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.analytics` | `InterleavingHintIssued`, `InterleavingHintConsumed`, `InterleavingHintExpired` (key = station id), `InterleavingPolicyDeclared` (key = site id) | **Published, no consumer** anywhere; none is planned beyond ADR 0004's "a later phase". |
 | operators, warehouse-console, warehouse-ops-agent | REST (Open Host Service) | `apis/openapi.yaml` | policy, hints, stations, recommendations | **Built** (the API), no known client. Not in `warehouse-infra`'s Kong routes. |
 
@@ -129,7 +142,8 @@ edges above are wired in code and unused in the cluster.
 - **No edge** to `wes-work-planning`, `process-path-management`, `order-management`,
   `inventory-storage` or `labor-performance`.
 - **No edge to `pick-face-replenishment`.** `REPLENISH` tasks reach this context
-  only as ordinary `TaskAvailable` occurrences, like any other task type.
+  only as `TaskAvailable` occurrences, like any other announced task type (announced
+  since fulfillment-execution's ADR 0050).
 - **No per-worker data.** Hints are per station; the associate is not an input.
 - No `cmd/mcp` and no MCP tool: nothing in the contracts names one.
 
