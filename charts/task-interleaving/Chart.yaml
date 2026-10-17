@@ -1,0 +1,12 @@
+apiVersion: v2
+name: task-interleaving
+description: Task Interleaving — ranks the open tasks of a site by travel distance when a station completes a task and issues an advisory hint; publishes Interleaving events on warehouse.task-interleaving.events and warehouse.task-interleaving.analytics
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/IQVO/task-interleaving
+keywords:
+  - ddd
+  - hexagonal-architecture
+  - warehouse-management-system
+  - golang

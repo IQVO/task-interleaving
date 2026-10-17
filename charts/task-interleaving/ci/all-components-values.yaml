@@ -1,0 +1,33 @@
+# Used by `helm lint` / `ct lint`: every optional value set at once.
+database:
+  existingSecret: "task-interleaving-db"
+kafka:
+  brokers: "kafka-0.kafka.warehouse-systems.svc.cluster.local:9092,kafka-1.kafka.warehouse-systems.svc.cluster.local:9092"
+config:
+  logLevel: "debug"
+  outboxRelayInterval: "500ms"
+  outboxMaxAttempts: 20
+  hintExpiryInterval: "2s"
+  shutdownDrainDelay: "5s"
+  fulfillmentConsumerGroup: "task-interleaving-fulfillment"
+  layoutConsumerGroup: "task-interleaving-layout"
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: warehouse-gateway
+      namespace: kong
+      sectionName: http
+  hosts:
+    - path: /api/task-interleaving
+      pathType: PathPrefix
+kongPlugins:
+  cors:
+    enabled: true
+    origin: "http://localhost"
+  prometheus:
+    enabled: true
+  opentelemetry:
+    enabled: true
+autoscaling:
+  api:
+    enabled: true

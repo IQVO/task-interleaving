@@ -30,8 +30,9 @@ the relay are always on, and `DATABASE_URL`, `KAFKA_BROKERS` and both consumer
 group ids are mandatory
 ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
 
-Not built: an MCP server (`cmd/mcp`), a Helm chart, a `Dockerfile`, any
-OpenTelemetry metric or trace, and a consumer of the hint in fulfillment-execution.
+Packaged: a `Dockerfile` and the Helm chart `charts/task-interleaving`. Not built:
+an MCP server (`cmd/mcp`), any OpenTelemetry metric or trace, a `warehouse-infra`
+entry and a consumer of the hint in fulfillment-execution.
 The [Runbook](/docs/operations/runbook#deployment) and
 [Integration](/docs/ecosystem/integration) pages say exactly where each edge stands.
 :::

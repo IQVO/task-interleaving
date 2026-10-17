@@ -1,0 +1,31 @@
+{{ .Chart.Name }} has been deployed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+Service:   {{ include "task-interleaving.fullname" . }} ({{ .Values.service.type }}, port {{ .Values.service.port }})
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+Ingress:   http://{{ .host }}{{ (index .paths 0).path }}
+{{- end }}
+{{- else if .Values.gatewayApi.enabled }}
+Gateway API HTTPRoute enabled — routed via the parentRefs/hosts configured
+in gatewayApi.*.
+{{- else }}
+To reach it locally:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "task-interleaving.fullname" . }} 8080:{{ .Values.service.port }}
+  curl http://localhost:8080/healthz
+{{- end }}
+
+Runtime (ADR 0006): real Postgres and real Kafka only. Brokers: {{ .Values.kafka.brokers }}.
+Interleaving events are relayed from the transactional outbox onto
+warehouse.task-interleaving.events and warehouse.task-interleaving.analytics.
+
+The two consumers are always ON (no *_MODE is set):
+  group {{ .Values.config.fulfillmentConsumerGroup }}  <- warehouse.fulfillment.events
+  group {{ .Values.config.layoutConsumerGroup }}  <- warehouse.facility.events
+
+/readyz answers 503 until Postgres answers and every consumed and produced
+topic has a leader: topics are owned by infrastructure, the service never
+creates them.

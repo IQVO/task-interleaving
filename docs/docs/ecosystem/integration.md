@@ -129,9 +129,11 @@ carried by this context and never interpreted.
 
 `warehouse-infra` (`origin/develop`) contains no reference to `task-interleaving`:
 no Terraform service entry, no Kong route under `/api/task-interleaving`, no
-ArgoCD application, no values file and no dashboard. This repo has no Helm chart
-or `Dockerfile` either. So the service is **built but not deployed**: the Kafka
-edges above are wired in code and unused in the cluster.
+ArgoCD application, no values file and no dashboard. This repo ships its own
+`Dockerfile` and Helm chart (`charts/task-interleaving`, see the
+[Runbook](/docs/operations/runbook#deployment)), so the service is
+**packaged but not deployed**: the Kafka edges above are wired in code and unused
+in the cluster until `warehouse-infra` installs the chart.
 
 ## Absent edges (on purpose)
 

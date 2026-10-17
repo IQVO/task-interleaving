@@ -100,6 +100,8 @@ These are constants in the source; changing them needs a code change.
   appears under `internal/adapters/inbound`.
 - **No MCP variables.** There is no `cmd/mcp`.
 - **No CORS, rate-limit or feature-flag variables.**
-- **No chart values.** The repository has no `charts/` directory and no
-  `Dockerfile` (see [Runbook](/docs/operations/runbook#deployment)), so no
-  deployment manifest maps these variables onto a pod.
+- **Chart values.** `charts/task-interleaving` maps these variables onto the pod
+  (`database.*`, `kafka.brokers`, `config.*`; see
+  [Runbook](/docs/operations/runbook#deployment)). `FULFILLMENT_MODE` and
+  `LAYOUT_MODE` have no value: the chart never renders them and refuses them in
+  `extraEnv`.
