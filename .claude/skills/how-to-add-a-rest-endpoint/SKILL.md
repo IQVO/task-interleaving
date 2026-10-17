@@ -1,9 +1,7 @@
 ---
 name: how-to-add-a-rest-endpoint
-description: Add or change a REST endpoint in this service in the fleet's hexagonal order (domain invariant, use case, port, HTTP adapter, apis/openapi.yaml, generated docs, godog scenario). Use when touching internal/adapters/inbound/http, apis/openapi.yaml, or exposing a use case over HTTP.
+description: Add or change a REST endpoint in this service in the fleet's hexagonal order (domain invariant, use case, port, HTTP adapter, apis/openapi.yaml, godog scenario). Use when touching the HTTP adapter, apis/openapi.yaml, or exposing a use case over HTTP.
 ---
-
-<!-- TEMPLATE NOTE (warehouse-harness-template v2): adapt every repo-specific example in this file (file paths, type names, field names) to THIS repo real code. Do not copy-paste verbatim. -->
 
 # How to add a REST endpoint
 
@@ -12,117 +10,100 @@ this order — domain first, adapter last — never the reverse; writing the
 HTTP handler before the domain invariant it enforces produces handlers
 that validate nothing and use cases that get bypassed.
 
-This walks the exact path `POST /bins/{binId}/cycle-count` took
-(`internal/application/usecases/run_cycle_count.go` +
-`internal/adapters/inbound/http/server.go`'s `handleRunCycleCount`) as the
-concrete worked example — read those two files alongside this guide.
+**State of this repo.** Contracts and domain are committed (wave 1); the
+application layer, the HTTP adapter and the composition root under `cmd/` are
+built in wave 2 and do not exist yet, so steps 2-3 below describe where code
+goes rather than pointing at files. The worked example is `GET
+/stations/{stationId}` (`operationId: getStation` in `apis/openapi.yaml`): it
+reads the `stationtrip.StationTrip` aggregate and returns its position and
+Active hint. Read the route table in `.claude/rules/rest-api.md` alongside this
+guide; keep it in sync when you add a route.
 
 ## 1. Domain first: does an invariant already exist, or do you need one?
 
-Check `internal/domain/<aggregate>/` for the rule this endpoint enforces.
-A REST endpoint should almost never contain business logic itself — it
-decodes a request, calls a use case, encodes the result. If the operation
-needs a new domain rule (e.g. "a counted quantity below zero is invalid"),
-add it to the aggregate/value-object in `internal/domain/`, with its own
-table-driven unit test, BEFORE touching the application or adapter layers.
+Check the four packages under `internal/domain/` (`policy`, `travel`,
+`recommend`, `stationtrip`) for the rule this endpoint enforces. A REST
+endpoint should almost never contain business logic itself — it decodes a
+request, calls a use case, encodes the result. If the operation needs a new
+domain rule (the way `PUT /sites/{siteId}/policy` needs "`maxCandidates` is 1
+to 5", which lives in `policy.Settings` validation and is refused with
+`policy.ErrInvalidCandidates`), add it to the aggregate or value object, with a
+table-driven test in the sibling `_test.go` file (see
+`internal/domain/policy/policy_test.go`), BEFORE touching the application or
+adapter layers. Remember the boundary values (see `.claude/skills/how-to-test/SKILL.md`).
 
-## 2. Application: define the use case
+## 2. Application: define the use case (application layer, wave 2)
 
-Add a new file in `internal/application/usecases/` (one file per use
-case, this repo's convention — not one giant `usecases.go`). Shape:
+One use case per file in the application layer, named after the
+`operationId` in PascalCase (`GetStation`, `DeclareInterleavingPolicy`,
+`RecommendTasks`). Shape:
 
 ```go
-package usecases
-
-type <Verb><Noun>Result struct {
-    // fields the caller needs back — domain types, not DTOs
+// GetStation — one sentence: what business capability this represents.
+type GetStation struct {
+    Trips ports.StationTripReader // driven ports only — never a concrete adapter
+    Clock ports.Clock             // if it needs "now" (never call time.Now() directly)
 }
 
-// <Verb><Noun> — one sentence: what business capability this represents,
-// and the domain rule it enforces (mirror RunCycleCount's doc comment,
-// which states the Unlocated-on-shortfall rule right in the doc comment).
-type <Verb><Noun> struct {
-    Repo   ports.<Aggregate>Repo   // driven ports only — never a concrete adapter
-    Events ports.EventPublisher    // if this raises a domain event
-    Clock  ports.Clock             // if it needs "now" (never call time.Now() directly)
-}
-
-func (uc *<Verb><Noun>) Execute(ctx context.Context, /* domain-typed args */) (<Verb><Noun>Result, error) {
-    // 1. load aggregate(s) via the port
-    // 2. call the aggregate's own method to apply the rule (never inline
-    //    the invariant here — that belongs in internal/domain/)
-    // 3. persist via the port
-    // 4. publish the domain event via Events, if any
-    // 5. return the result
+func (uc *GetStation) Execute(ctx context.Context, id stationtrip.StationID) (StationView, error) {
+    // 1. load the aggregate (or read model) via the port
+    // 2. let the aggregate apply the rule (never inline the invariant here)
+    // 3. persist via the port, writing events to the outbox in the SAME transaction
+    // 4. return a domain-typed result, not a DTO
 }
 ```
 
-Add the port to `internal/application/ports/` if it doesn't exist yet —
-ports are interfaces ONLY (`TestPortsAreCustomerOwned`/
-`TestApplicationPortsContainOnlyInterfaces`-style fitness tests in
-`internal/architecture/` enforce this; a struct or function in a ports
-package fails CI).
+Driven ports are interfaces ONLY, defined in the application layer; the
+architecture tests in `internal/architecture` keep adapters and domain from
+importing each other. Unit-test use cases against an in-memory adapter, never a
+real Postgres/HTTP call, and cover the success path AND the domain-rule failure
+path. A command that changes a mutable resource (the policy) takes the expected
+version for the `If-Match` check and returns the new version for the `ETag`.
 
-Write the use case's unit test against the in-memory adapter
-(`internal/adapters/outbound/memory/`) — never a real Postgres/HTTP call
-in a unit test. Cover the success path AND the domain-rule failure path.
+## 3. Adapter: wire the HTTP handler (HTTP adapter, wave 2)
 
-## 3. Adapter: wire the HTTP handler
+In the inbound HTTP adapter:
 
-In `internal/adapters/inbound/http/`:
+1. Request/response DTOs live ONLY in the adapter (camelCase JSON as in
+   `apis/openapi.yaml`); domain types never carry JSON tags.
+2. The handler decodes and validates, converting to domain value objects
+   immediately (`stationtrip.NewStationID`, `policy.NewSiteID`) — a bad value
+   fails here as an RFC 7807 `400` (`invalid-station-id`), never reaching the
+   use case; calls `Execute`; maps use-case errors to a problem type through ONE
+   error-mapping table (add a row, don't hand-roll a status); encodes the
+   result.
+3. Honour the cross-cutting rules: `Idempotency-Key` on POST, `ETag` /
+   `If-Match` on versioned resources, no auth middleware (fleet decision
+   2026-09-11, `TestNoAuthMiddlewareReintroduced`).
+4. Wire the new use case in the composition root under `cmd/` — the only place
+   that imports every layer.
 
-1. `dto.go` — add the request/response DTO structs (JSON tags, this repo's
-   naming convention: `<verb><noun>Request`/`<verb><noun>Response`).
-   DTOs live ONLY in the adapter layer — domain types never carry JSON
-   tags.
-2. `server.go` — add the route (`r.Post("/path/{param}", s.handle<Name>)`
-   in the router setup) and the handler function:
-   - decode + validate the request (`decodeJSON`), converting to domain
-     value objects immediately (`shared.NewBinId`, `shared.NewQuantity`,
-     etc.) — a bad value fails here as an RFC 7807 validation error, never
-     reaches the use case
-   - call the use case's `Execute`
-   - map use-case errors to HTTP status via `writeError` (check
-     `errors.go` for the existing error→status mapping before adding a new
-     error type)
-   - encode the domain result back to the response DTO and `writeJSON`
-3. Add the new use case field to the `Server`/`Deps` struct and wire it in
-   the composition root (`cmd/<service>/main.go`).
+Write at least one httptest per endpoint: one success path, one error path
+(validation failure AND/OR the domain-rule failure).
 
-Write at least one httptest per endpoint: one success path, one error
-path (validation failure AND/OR the domain-rule failure, whichever this
-endpoint can produce).
+## 4. Contract: update OpenAPI
 
-## 4. Contract: update OpenAPI, then regenerate docs
-
-Add the path to `apis/openapi.yaml` (request/response schemas, the RFC
-7807 problem-detail response for each error case — see the existing
-`/bins/{binId}/cycle-count` entry for the shape).
-
-Regenerate the Docusaurus REST reference — this repo's `docs-api-drift`
-CI job fails the PR if you skip this:
-
-```bash
-cd docs
-npm run clean-api-docs   # or the repo's own script name — check package.json
-npm run gen-api-docs
-```
+Add the path to `apis/openapi.yaml` with request/response schemas and an RFC
+7807 `application/problem+json` response for each error case, following the
+existing entries (`Problem`, `BadRequest`, `Unprocessable`, `VersionMismatch`).
+The error `type` is `https://errors.task-interleaving.warehouse-systems.dev/<slug>`.
+Lint it with the repo's spectral ruleset (`.spectral.yaml`). Then update
+`.claude/rules/rest-api.md`.
 
 ## 5. Behaviour: add a godog scenario
 
-If this endpoint is user-facing behaviour (not purely internal
-plumbing), add a `.feature` file under `features/` exercising it
-end-to-end against the real HTTP server — see `features/cycle_count.feature`
-for the exact shape this repo's `bdd` CI job expects (Given/When/Then over
-real HTTP, not mocked).
+If the endpoint is user-facing behaviour, add a Gherkin `.feature` file in the
+feature-files directory for the `make bdd` target (it does not exist yet; it
+arrives with the HTTP adapter) exercising it end-to-end against the real HTTP
+server — Given/When/Then over real HTTP, not mocked.
 
 ## 6. Verify before opening the PR
 
 ```bash
 make check       # fmt-check vet build lint test
-make check-all    # + coverage (90% gate) + arch-test + bdd
+make check-all   # + coverage (90% gate) + arch-test + bdd
 ```
 
-`make coverage` gates `./internal/domain/...,./internal/application/...`
-at 90% — a new use case with no test on its failure path is the most
-common way to miss this gate.
+`make coverage` gates `./internal/domain/...,./internal/application/...` at 90%
+— a new use case with no test on its failure path is the most common way to
+miss this gate.

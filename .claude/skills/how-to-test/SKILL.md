@@ -3,8 +3,6 @@ name: how-to-test
 description: Write or review tests and diagnose a failing coverage, mutation, bdd or integration CI job: the four test layers, the 90% gate, gremlins threshold semantics, the testcontainers rule. Use when adding tests, killing a surviving mutant, or fixing a red check.
 ---
 
-<!-- TEMPLATE NOTE (warehouse-harness-template v2): adapt every repo-specific example in this file (file paths, type names, field names) to THIS repo real code. Do not copy-paste verbatim. -->
-
 # How to test
 
 Use when writing or reviewing tests in this repo, or diagnosing a failing
@@ -15,99 +13,109 @@ assert nothing.
 
 ## The four layers, in order of what they actually prove
 
-1. **Unit tests** (`go test ./...`) — prove the code runs without
-   panicking and returns SOMETHING. Table-driven, in-memory adapters only
-   (`internal/adapters/outbound/memory/`), never a real network/DB call.
+1. **Unit tests** (`go test ./...`) — prove the code runs and returns
+   SOMETHING. Table-driven, no real network/DB call. Domain tests live next
+   to the code: `internal/domain/stationtrip/trip_test.go`,
+   `internal/domain/recommend/recommend_test.go`,
+   `internal/domain/policy/policy_test.go`,
+   `internal/domain/travel/travel_test.go`. Use cases (wave 2) are tested
+   against an in-memory adapter.
 2. **Coverage** (`make coverage`, 90% gate on
    `./internal/domain/...,./internal/application/...`) — proves lines
    executed. Proves nothing about whether the test asserted the right
    thing.
-3. **Mutation testing** (`make mutation-fast`, gremlins) — proves the
-   tests actually ASSERT, not merely execute. A mutant is a deliberately
-   broken version of the code (`<` -> `<=`, `+` -> `-`, etc.); if the test
-   suite still passes against the mutant, it "survived" (LIVED) — meaning
-   no test would catch that exact bug in production. This is the sensor
-   most worth understanding deeply; the pitfalls below are all about it.
-4. **BDD / behaviour** (`make bdd`, godog) — proves the use case works
-   end-to-end through the real HTTP surface, not through a mocked port.
+3. **Mutation testing** (`make mutation`, gremlins; there is no
+   `mutation-fast` make target — that is the name of the CI job, which runs
+   the same loop) — proves the tests actually ASSERT, not merely execute. A
+   mutant is a deliberately broken version of the code (`<` -> `<=`, `+` ->
+   `-`); if the suite still passes against it, it "survived" (LIVED) and no test
+   would catch that bug in production. `make mutation` mutates each domain
+   package on its own: `stationtrip`, `recommend`, `travel`, `policy`
+   (`MUTATION_FAST_PKGS` in the `Makefile`); `make mutation-full` is the
+   exhaustive scheduled run.
+4. **BDD / behaviour** (`make bdd`, godog) — proves a use case works
+   end-to-end through the real HTTP surface. The HTTP adapter and its
+   feature files arrive in wave 2; until then `make bdd` has nothing to run.
+
+Also: `make arch-test` (the fitness tests in `internal/architecture`),
+`make integration` (needs Docker), `make vuln`.
 
 ## Mutation testing: `<=` fails, not `>=`
 
-`.gremlins.yaml` sets `efficacy-threshold`/`mutant-coverage-threshold` as
-a floor gremlins fails on if the MEASURED score is `<=` the threshold —
-read the comment at the top of this repo's `.gremlins.yaml` for the exact
-current values and when they were last re-baselined. When you deliberately
-lower coverage of a package (rare, but happens when removing dead code),
-you may need to lower the threshold in the SAME PR with a dated comment
-explaining why — never silently; a future reader needs to know the drop
-was intentional, not a regression that slipped through.
+`.gremlins.yaml` sets `efficacy` and `mutant-coverage` thresholds that
+gremlins fails on if the MEASURED score is `<=` the threshold, so a threshold
+must sit strictly BELOW what the repo can meet. Read the comment in
+`.gremlins.yaml` for the current baseline: all four domain packages measured
+100% efficacy and 100% mutator coverage with 0 lived mutants, and the
+thresholds are 90. When you deliberately lower coverage of a package (rare,
+for example removing dead code), lower the threshold in the SAME PR with a
+dated comment explaining why — never silently.
+
+A new package under `internal/domain/` must be added to `MUTATION_FAST_PKGS` in
+the `Makefile` AND to the `mutation-fast` loop in `.github/workflows/ci.yml`.
 
 ## Three real pitfalls that have each cost a real CI failure in this fleet
 
 ### 1. Zero/origin-value fixtures hide arithmetic mutants
 
-A test built around zero-valued operands (e.g. a point at the origin
-`(0,0,0)`) makes `a - b` and `a + b` produce the same result, so a mutant
-flipping `-` to `+` survives even though coverage looks complete. Any new
-value object with real arithmetic needs fixture values where EVERY
-operand and every per-axis/per-field delta is distinct and non-zero, and
-the test must assert the exact expected value, not just "no error".
+A test built around zero-valued operands (a point at the origin `(0,0,0)`) makes
+`a - b` and `a + b` identical, so a `-` to `+` mutant survives even though
+coverage looks complete. `travel.Rectilinear.Distance`
+(`|dx| + |dy| + VerticalWeight*|dz|`) needs fixtures where EVERY operand and
+every per-axis delta is distinct and non-zero, a `VerticalWeight` other than 0
+and 1, and the test must assert the exact expected value (and `travel.Round`'s
+0.1 m rounding), not just "no error".
 
 ### 2. Boundary guards need the boundary value itself
 
-A test for `if x < 0 { return err }` that only tries `-1` (clearly
-invalid) and `42` (clearly valid) never exercises `0` — so a
-`CONDITIONALS_BOUNDARY` mutant rewriting `<` to `<=` survives silently.
-Every `< 0`/`> 0`/`<= 0` guard needs an explicit test for the boundary
-value itself (e.g. the guard's exact threshold must succeed, not error,
-if that's the intended behavior at the boundary).
+A test for `if x < 0 { return err }` that only tries `-1` and `42` never
+exercises `0`, so a `CONDITIONALS_BOUNDARY` mutant (`<` to `<=`) survives. This
+domain is full of boundaries: `MaxCandidates` 1 and 5 (and 0 and 6), a detour
+EXACTLY equal to `MaxDetourM` (it qualifies), `Expire(now)` exactly at
+`expires_at` (expires) and `RecordClaim` exactly at `expires_at` (too late),
+`MaxDetourM` just above 0. Every guard needs an explicit test of the boundary
+value itself.
 
 ### 3. Tie-break / near-equivalent mutants: know when NOT to chase them
 
-A shortest-path relaxation (`if candidate < dist[node]`) or a priority
-queue's `Less` has a `<` -> `<=` mutant that is undetectable by ANY test
-whose edge weights are all distinct — the mutation only diverges on an
-exact tie. Do NOT force an artificial tied-weight fixture just to kill
-this; that pins an arbitrary, currently-unspecified tie-break order as if
-it were a real invariant, which is worse than an accepted near-equivalent
-survivor. Document it in the repo's `MUTATION.md` triage section instead,
-and move on. The same applies to a boundary guard whose boundary is
-structurally unreachable (e.g. `len(x) >= 1` always holds, so the `< 0`
-side of a derived guard can never fire) — add a test for the reachable
-edge case, but don't chase the mutant on the unreachable side.
+A `<` to `<=` mutant on a comparison that only diverges on an exact tie is
+undetectable by a test whose values are all distinct. Here the tie-break IS a
+specified rule (rank by `DetourM`, then `TaskID`, ADR 0002), so
+`recommend.Recommend` MUST have a tie test — that one is a real invariant. Do
+NOT force an artificial tie into a place where the order is unspecified: it pins
+an arbitrary order as if it were an invariant. Record a genuinely
+near-equivalent survivor in the PR description (and in a mutation triage doc if
+the repo has one) and move on. The same applies to a guard whose boundary is
+structurally unreachable: test the reachable edge, don't chase the other side.
 
 ## Diagnosing a `mutation-fast` CI failure: diff against develop, don't chase every LIVED line
 
 ```bash
-gremlins unleash ./internal/domain          # on your branch
-git stash && git checkout origin/develop -- . && gremlins unleash ./internal/domain   # baseline
+gremlins unleash ./internal/domain/stationtrip   # on your branch, per package
 ```
 
-Only entries NEW on your branch are your regression. Most repos in this
-fleet already carry a small permanent baseline of accepted survivors
-(documented in `MUTATION.md`) — confirming the survivor SET is unchanged
-from `origin/develop`, not just that the percentage cleared the
-`.gremlins.yaml` gate, is the real proof a fix didn't just get lucky on
-the threshold.
+Compare with the same run on `origin/develop` (in a separate worktree, never by
+stashing). Only entries NEW on your branch are your regression. Confirming the
+survivor SET is unchanged from `origin/develop`, not just that the percentage
+cleared the `.gremlins.yaml` gate, is the real proof a fix didn't get lucky on
+the threshold. Today the baseline is zero survivors, so any LIVED line is yours.
 
 ## Kafka/Postgres integration tests: testcontainers, never a skip-gate
 
 A `-tags=integration` test touching Kafka or Postgres MUST start its own
 container via `testcontainers-go` (`modules/postgres` / `modules/kafka`).
-Never gate on `os.Getenv("KAFKA_BROKERS")` or `os.Getenv("DATABASE_URL")`
-(or `ANALYTICS_DATABASE_URL`) + `t.Skip(...)`, and never hardcode
-`localhost:9092`. This fleet's CI `integration` job provisions NO service
-containers (no Postgres, no Kafka; `make integration` needs only Docker) — a
-skip-gated test silently skips in CI and proves nothing there, while
-testcontainers actually exercises the assertions on the runner. A fitness
-test per technology enforces it (`TestKafkaIntegrationTestsUseTestcontainers`,
+Never gate on `os.Getenv("KAFKA_BROKERS")` or `os.Getenv("DATABASE_URL")` +
+`t.Skip(...)`, and never hardcode `localhost:9092`. This fleet's CI
+`integration` job provisions NO service containers (`make integration` needs
+only Docker) — a skip-gated test silently skips in CI and proves nothing there.
+A fitness test per technology enforces it
+(`TestKafkaIntegrationTestsUseTestcontainers`,
 `TestPostgresIntegrationTestsUseTestcontainers`). Share one container per
-package through a helper (e.g. an `outboxDB(t)` that runs
-`tcpostgres.Run` -> `ConnectionString` -> migrate -> pool -> `t.Cleanup`). See
-`internal/adapters/outbound/facilitycache/consumer_integration_test.go`
-for the working recipe (unique topic per test, one shared container per
-package, explicit `CreateTopics` + poll for the partition leader before
-the first read/write).
+package through a helper, use a unique topic per test, and create topics
+explicitly then poll for the partition leader before the first read or write.
+Integration tests for the consumers and the outbox are wave 2; the first Kafka
+test that exists is the writer test in
+`internal/adapters/outbound/kafka/writer_test.go`.
 
 ## Verify before opening the PR
 
@@ -115,6 +123,6 @@ the first read/write).
 make check-all   # check + coverage + arch-test + bdd (the full local gate)
 ```
 
-If `check-all` doesn't include `mutation-fast`/`vuln` locally, run them
-explicitly too — CI runs them even when the local gate doesn't, so a PR
-can pass your local check and still go red in CI otherwise.
+`check-all` does not include `mutation` or `vuln`. Run `make mutation` (and
+`make vuln`) explicitly — CI runs them, so a PR can pass your local check and
+still go red otherwise.
