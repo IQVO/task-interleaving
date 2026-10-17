@@ -1,0 +1,30 @@
+# Non-secret configuration of the api component, mirrored from the env the
+# Deployment renders and mounted into the api container with envFrom (the
+# explicit env entries win for the same key); the Deployment's
+# checksum/config annotation rolls the pods whenever any of it changes. Every
+# key is a variable cmd/api reads (tests/render_test.sh). DATABASE_URL never
+# lands here: it lives in the Secret (templates/secret.yaml or
+# database.existingSecret). The *_MODE variables are never rendered (ADR 0006).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "task-interleaving.fullname" . }}
+  labels:
+    {{- include "task-interleaving.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+data:
+  HTTP_ADDR: {{ .Values.config.httpAddr | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  KAFKA_BROKERS: {{ required "task-interleaving requires kafka.brokers to be set (KAFKA_BROKERS, comma-separated): the service runs on real Kafka only and exits at boot without it (ADR 0006)." .Values.kafka.brokers | quote }}
+  FULFILLMENT_CONSUMER_GROUP: {{ required "task-interleaving requires config.fulfillmentConsumerGroup to be set (FULFILLMENT_CONSUMER_GROUP)" .Values.config.fulfillmentConsumerGroup | quote }}
+  LAYOUT_CONSUMER_GROUP: {{ required "task-interleaving requires config.layoutConsumerGroup to be set (LAYOUT_CONSUMER_GROUP)" .Values.config.layoutConsumerGroup | quote }}
+  {{- with .Values.config.hintExpiryInterval }}
+  HINT_EXPIRY_INTERVAL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.outboxRelayInterval }}
+  OUTBOX_RELAY_INTERVAL: {{ . | quote }}
+  {{- end }}
+  OUTBOX_MAX_ATTEMPTS: {{ .Values.config.outboxMaxAttempts | quote }}
+  {{- with .Values.config.shutdownDrainDelay }}
+  SHUTDOWN_DRAIN_DELAY: {{ . | quote }}
+  {{- end }}
