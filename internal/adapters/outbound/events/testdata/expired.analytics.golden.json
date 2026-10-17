@@ -1,0 +1,16 @@
+{
+  "specversion": "1.0",
+  "id": "4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a",
+  "source": "/warehouse/task-interleaving",
+  "type": "com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintExpired",
+  "subject": "STN-07",
+  "time": "2026-10-17T12:01:31Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:task-interleaving:analytics:InterleavingHintExpired:v1",
+  "data": {
+    "hint_id": "hint-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07",
+    "station_id": "STN-07",
+    "site_id": "SITE-1",
+    "expires_at": "2026-10-17T12:01:30Z"
+  }
+}

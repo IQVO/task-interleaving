@@ -1,0 +1,20 @@
+{
+  "specversion": "1.0",
+  "id": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+  "source": "/warehouse/task-interleaving",
+  "type": "com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared",
+  "subject": "SITE-1",
+  "time": "2026-10-17T11:00:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:task-interleaving:analytics:InterleavingPolicyDeclared:v1",
+  "data": {
+    "site_id": "SITE-1",
+    "max_detour_m": 25,
+    "max_candidates": 3,
+    "hint_ttl_seconds": 90,
+    "eligible_task_types": ["PICK", "REPLENISH"],
+    "vertical_weight": 1.5,
+    "version": 2,
+    "declared_at": "2026-10-17T11:00:00Z"
+  }
+}

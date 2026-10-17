@@ -10,17 +10,19 @@ paths:
 The contract is `apis/openapi.yaml` (OpenAPI 3.0.3, base URL
 `http://localhost:8080`, via Kong `http://localhost:8000/api/task-interleaving`).
 This file is documentation for an agent, not generated: keep it in sync with the
-spec by hand. The HTTP adapter and the use cases are built in wave 2; the use case
-names below are the intended ones, one per `operationId`.
+spec by hand. The adapter is `internal/adapters/inbound/http` (chi router, one
+handler file per resource); `TestRouterServesExactlyTheDocumentedOperations`,
+`TestProblemSlugsMatchTheContract` and `TestResponsesHaveTheDocumentedShape` fail
+when the router, the problem slugs or the response shapes drift from the spec.
 
-| Route | operationId | Intended use case |
+| Route | operationId | Use case |
 | --- | --- | --- |
-| `PUT /sites/{siteId}/policy` | `declareInterleavingPolicy` | `DeclareInterleavingPolicy` |
-| `GET /sites/{siteId}/policy` | `getInterleavingPolicy` | `GetInterleavingPolicy` |
+| `PUT /sites/{siteId}/policy` | `declareInterleavingPolicy` | `DeclarePolicy` |
+| `GET /sites/{siteId}/policy` | `getInterleavingPolicy` | `GetPolicy` |
 | `GET /hints` | `listHints` | `ListHints` (filters `stationId`, `siteId`, `state`; `limit` 1..500, default 100; opaque `cursor`) |
 | `GET /hints/{hintId}` | `getHint` | `GetHint` |
 | `GET /stations/{stationId}` | `getStation` | `GetStation` |
-| `POST /recommendations` | `recommendTasks` | `RecommendTasks` (read-only simulation: no state change, no event) |
+| `POST /recommendations` | `recommendTasks` | `Recommend` (read-only simulation: no state change, no event; behind the `Idempotency-Key` middleware) |
 | `GET /healthz`, `GET /readyz` | `healthz`, `readyz` | probes; `/readyz` is 503 while starting or draining |
 
 Hints are issued by the event consumers, never by a REST call; nothing in this
@@ -38,7 +40,11 @@ API assigns work to a worker.
   (`idempotency-key-required`).
 - `404`: `policy-not-found` (an inert site), `hint-not-found`, `station-not-found`.
 - `409` `concurrent-modification`: a write lost a race at the database.
-- `412` `version-mismatch`: `If-Match` missing or stale on an existing policy.
+- `412` `version-mismatch`: `If-Match` missing or stale on an existing policy. An
+  `If-Match` that is not a version (weak tag, `*`, garbage) can match no version and
+  gets the same 412 (the contract documents no other answer); the first declaration
+  of a site sends none, and an `If-Match` on it is a 412 too. `If-Match` is read
+  quoted (`"2"`) or bare (`2`).
 - `422`: `policy-not-declared`, `origin-unknown`, `station-position-unknown`,
   `idempotency-key-reused` (same key, different body).
 - `500` `internal-error`.
@@ -46,6 +52,9 @@ API assigns work to a worker.
   accepted change) and a strong `ETag: "<version>"`. The first policy declaration
   sends no `If-Match`; replacing an existing policy requires `If-Match` with the
   current version. Declaring identical values still advances the version.
+- `400` `malformed-request` also covers a `fromLocation` that is present but empty,
+  blank or longer than 128 characters (the request schema's bounds); a blank or
+  invalid `stationId` is `invalid-station-id`.
 - `Idempotency-Key` (UUID per logical submit) is required on every POST whenever
   the service runs with Postgres; a replay with the same key and body returns the
   original response. It is not marked `required` in the spec only because the
