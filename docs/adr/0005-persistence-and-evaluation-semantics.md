@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (2026-10-17).
+Accepted (2026-10-17). The in-memory development mode (`go run ./cmd/api`
+without `DATABASE_URL`) mentioned under "Persistence" is superseded by
+[ADR 0006](0006-postgres-and-kafka-are-the-only-runtime.md): the binary runs on
+Postgres and Kafka only; the in-memory adapters remain test doubles.
 
 ## Context
 

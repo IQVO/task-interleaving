@@ -54,6 +54,9 @@ help:
 	@echo "  mutation       gremlins on each of $(MUTATION_FAST_PKGS) — the fast blocking subset"
 	@echo "  mutation-full  gremlins on $(MUTATION_FULL_PKG) — the exhaustive scheduled run"
 	@echo "  vuln           govulncheck ./... — supply-chain / stdlib CVE sensor"
+	@echo "  run-local      docker compose Postgres + Kafka (topics created), then go run ./cmd/api"
+	@echo "  local-up       only start the local Postgres + Kafka and create the topics"
+	@echo "  local-down     stop them (docker compose down; the Postgres volume is kept)"
 	@echo ""
 	@echo "  check          FAST pre-commit bundle: fmt-check vet build lint test"
 	@echo "  check-all      check + coverage arch-test bdd — run this before pushing"
@@ -167,3 +170,24 @@ guide-lint: ## lint agent guides: skills load, references resolve, context budge
 
 harness-test: ## unit-test the agent hooks (pre/post/stop)
 	python3 scripts/harness/test_hook.py
+
+# --- local run on the real infrastructure (ADR 0006) --------------------------
+# There is no in-memory mode: the service needs Postgres and Kafka. These
+# targets bring both up with docker-compose.yml (a job creates the four topics:
+# the service never creates topics) and run the service on them. Host ports
+# 5432 and 9092 must be free.
+.PHONY: local-up local-down run-local
+LOCAL_DATABASE_URL ?= postgres://ti:ti@localhost:5432/ti?sslmode=disable
+LOCAL_KAFKA_BROKERS ?= localhost:9092
+
+local-up: ## start the local Postgres + Kafka and create the topics
+	docker compose up -d --wait postgres kafka
+	docker compose run --rm topics
+
+local-down: ## stop the local Postgres + Kafka (data is kept in the ti_postgres_data volume)
+	docker compose down
+
+run-local: local-up ## run the service on the local Postgres + Kafka
+	DATABASE_URL='$(LOCAL_DATABASE_URL)' KAFKA_BROKERS='$(LOCAL_KAFKA_BROKERS)' \
+	FULFILLMENT_CONSUMER_GROUP=ti-local-fulfillment LAYOUT_CONSUMER_GROUP=ti-local-layout \
+	$(GO) run ./cmd/api
