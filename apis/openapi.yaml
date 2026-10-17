@@ -333,7 +333,7 @@ paths:
     get:
       operationId: readyz
       summary: Readiness probe
-      description: 200 when the service can serve traffic. 503 while draining for shutdown (`{"status":"not_ready"}`) or while Postgres or the Kafka brokers/topics are unreachable (problem `dependency-unavailable`). The dependency verdict is cached for a few seconds.
+      description: 200 when the service can serve traffic. 503 while draining for shutdown (`{'status':'not_ready'}`) or while Postgres or the Kafka brokers/topics are unreachable (problem `dependency-unavailable`). The dependency verdict is cached for a few seconds.
       tags: [Health]
       responses:
         "200":
