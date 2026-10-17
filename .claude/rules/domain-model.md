@@ -83,10 +83,12 @@ On the wire they are `InterleavingHintIssued`, `InterleavingHintConsumed` and
 `InterleavingPolicyDeclared` is also published, but package `policy` has no event
 type yet: the application layer builds it when a policy is declared.
 
-## Key use cases (the application layer, built in wave 2)
+## Key use cases (the application layer)
 
-No use case exists yet. The planned ones, one per REST route and consumer effect
-(see `.claude/rules/rest-api.md`): declare / get the interleaving policy, list /
-get hints, get a station, simulate a recommendation, and the consumer effects
-that record a completion, issue a hint, record a claim and expire hints. Each
-runs in one database transaction with the outbox rows of the events it raises.
+The application layer exists in `internal/application/usecases`, one use case per
+REST route and consumer effect (see `.claude/rules/rest-api.md`): declare / get the
+interleaving policy, list / get hints, get a station, simulate a recommendation
+(`Recommend`), the consumer effects `ApplyTaskAvailable`, `ApplyTaskClaimed`,
+`ApplyTaskCompleted` and the layout appliers in `apply_layout.go`, and the expiry
+sweeper `ExpireHints`. Each runs in one UnitOfWork with the outbox rows of the
+events it raises.
