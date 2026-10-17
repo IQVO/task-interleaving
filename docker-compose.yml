@@ -1,0 +1,58 @@
+# Local infrastructure for `make run-local`: the real Postgres and the real
+# Kafka the service runs on (ADR 0006: there is no in-memory mode). The
+# `topics` job plays the part of the infrastructure team: the service never
+# creates topics, so it creates the four this context consumes and produces.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ti
+      POSTGRES_PASSWORD: ti
+      POSTGRES_DB: ti
+    ports:
+      - "5432:5432"
+    volumes:
+      - ti_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ti -d ti"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    image: confluentinc/confluent-local:7.6.1
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # Like the shared cluster: topics are created by infrastructure only.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  topics:
+    image: confluentinc/confluent-local:7.6.1
+    # The broker's in-network listener advertises localhost, so the job joins
+    # the broker's network namespace and talks to it on localhost:9092.
+    network_mode: "service:kafka"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        for topic in \
+          warehouse.fulfillment.events \
+          warehouse.facility.events \
+          warehouse.task-interleaving.events \
+          warehouse.task-interleaving.analytics; do
+          kafka-topics --bootstrap-server localhost:9092 --create --if-not-exists --topic "$$topic" --partitions 1 --replication-factor 1
+        done
+
+volumes:
+  ti_postgres_data:

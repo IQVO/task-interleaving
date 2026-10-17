@@ -80,7 +80,7 @@ ADR 0004.
 
 1. **Declare.** An operator declares a site policy. Until then the site is inert.
 2. **Feed.** fulfillment-execution and facility-layout events fill the local copies
-   (open-task pool, claims, geometry) through the opt-in consumers.
+   (open-task pool, claims, geometry) through the always-on consumers.
    fulfillment-execution publishes `TaskAvailable` today only for RELOCATE and REPLENISH tasks.
 3. **Complete.** A `TaskCompleted` records the station's new position, taken from the
    completed task's `to_location` in the pool copy.

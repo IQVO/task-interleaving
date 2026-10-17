@@ -157,6 +157,14 @@ func Count(t *testing.T, pool *pgxpool.Pool, table string) int {
 	return n
 }
 
+// Scan runs query with args and scans its single row into dest.
+func Scan(t *testing.T, pool *pgxpool.Pool, query string, args []any, dest ...any) {
+	t.Helper()
+	if err := pool.QueryRow(context.Background(), query, args...).Scan(dest...); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+}
+
 // schemaSQL describes the public schema deterministically: every column with
 // its type, nullability, default and collation, every index definition and
 // every constraint definition. schema_migrations (golang-migrate's own table)

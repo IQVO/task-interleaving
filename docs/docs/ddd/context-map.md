@@ -30,14 +30,14 @@ table), `docs/adr/0003-local-copies-and-consumed-contracts.md`, `apis/asyncapi.y
 fulfillment-execution's `apis/asyncapi.yaml` and ADRs 0049 and 0050 on its
 `origin/develop` for the `TaskAvailable` scope.
 Solid arrows have code on both sides (producer publishes, consumer built and
-opt-in); dotted arrows have code on one side only. Omits the contexts this one deliberately has no edge to.
+always on); dotted arrows have code on one side only. Omits the contexts this one deliberately has no edge to.
 
 ## Edges
 
 | Edge | Relationship | Status |
 | --- | --- | --- |
-| facility-layout -> task-interleaving | Open Host Service / Published Language (`ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` on `warehouse.facility.events`); task-interleaving is a **Conformist** and keeps a local location copy | Producer contract present in `facility-layout`'s `apis/asyncapi.yaml` on `origin/develop`; consumer **built** (`LAYOUT_MODE=kafka`, opt-in) |
-| fulfillment-execution -> task-interleaving, `TaskCompleted` | Published Language (`warehouse.fulfillment.events`); **Conformist** | Producer contract present on `origin/develop`; consumer **built** (`FULFILLMENT_MODE=kafka`, opt-in) |
+| facility-layout -> task-interleaving | Open Host Service / Published Language (`ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` on `warehouse.facility.events`); task-interleaving is a **Conformist** and keeps a local location copy | Producer contract present in `facility-layout`'s `apis/asyncapi.yaml` on `origin/develop`; consumer **built** (always on; group `LAYOUT_CONSUMER_GROUP`) |
+| fulfillment-execution -> task-interleaving, `TaskCompleted` | Published Language (`warehouse.fulfillment.events`); **Conformist** | Producer contract present on `origin/develop`; consumer **built** (always on; group `FULFILLMENT_CONSUMER_GROUP`) |
 | fulfillment-execution -> task-interleaving, `TaskAvailable` and `TaskClaimed` | Published Language; **Conformist** | Both published on `warehouse.fulfillment.events` by fulfillment-execution (its ADR 0049; ADR 0050 adds REPLENISH); consumer **built**. `TaskAvailable` is announced for **RELOCATE and REPLENISH tasks** (the only types that carry bins in fulfillment-execution), `TaskClaimed` for every task type. PICK, PACK, SLAM and REBIN tasks are not announced. |
 | task-interleaving -> fulfillment-execution | Published Language (`InterleavingHintIssued`); fulfillment-execution is a **Conformist** to the payload but owns the decision to use it (tie-break inside one priority band, fail-open) | Published by this context; **no consumer** in fulfillment-execution's `origin/develop` (its ADR 0049 and ADR 0050 list consuming it as out of scope) |
 | task-interleaving -> warehouse-ops-agent, warehouse-console | **Open Host Service** (REST) | REST API **built**; no known client and no `warehouse-infra` route |

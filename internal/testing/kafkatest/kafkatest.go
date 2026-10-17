@@ -27,11 +27,16 @@ var (
 )
 
 // Brokers starts the shared broker on first use and returns its addresses.
+// The broker has topic auto-creation OFF, like the infrastructure the service
+// runs against (infra owns the topics, the service never creates them): a test
+// that needs a topic creates it explicitly (Topic / CreateTopic).
 func Brokers(t *testing.T) []string {
 	t.Helper()
 	once.Do(func() {
 		ctx := context.Background()
-		container, startErr = tckafka.Run(ctx, "confluentinc/confluent-local:7.6.1", tckafka.WithClusterID("task-interleaving-itest"))
+		container, startErr = tckafka.Run(ctx, "confluentinc/confluent-local:7.6.1",
+			tckafka.WithClusterID("task-interleaving-itest"),
+			testcontainers.WithEnv(map[string]string{"KAFKA_AUTO_CREATE_TOPICS_ENABLE": "false"}))
 		if startErr != nil {
 			return
 		}
@@ -149,9 +154,11 @@ func Produce(t *testing.T, topic string, msgs ...Message) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// A just-created topic can still be unknown to the broker that serves the
-	// produce request even once its leader is visible, so retry that one error.
+	// produce request even once its leader is visible (a sibling repo failed
+	// CI on exactly this race), so retry that one error until the context
+	// deadline.
 	var err error
-	for attempt := 0; attempt < 50; attempt++ {
+	for ctx.Err() == nil {
 		if err = w.WriteMessages(ctx, out...); err == nil || !errors.Is(err, kafkago.UnknownTopicOrPartition) {
 			break
 		}
@@ -160,6 +167,43 @@ func Produce(t *testing.T, topic string, msgs ...Message) {
 	if err != nil {
 		t.Fatalf("produce to %s: %v", topic, err)
 	}
+}
+
+// TopicExists reports whether the broker knows topic (a metadata request that
+// never creates it).
+func TopicExists(t *testing.T, topic string) bool {
+	t.Helper()
+	client := &kafkago.Client{Addr: kafkago.TCP(Brokers(t)...), Timeout: 10 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	resp, err := client.Metadata(ctx, &kafkago.MetadataRequest{Topics: []string{topic}})
+	if err != nil {
+		t.Fatalf("metadata of %s: %v", topic, err)
+	}
+	for _, tp := range resp.Topics {
+		if tp.Name == topic {
+			return tp.Error == nil
+		}
+	}
+	return false
+}
+
+// EndOffset returns the offset the next message of partition 0 of topic will
+// get, that is how many messages the topic holds from offset 0.
+func EndOffset(t *testing.T, topic string) int64 {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := kafkago.DialLeader(ctx, "tcp", Brokers(t)[0], topic, 0)
+	if err != nil {
+		t.Fatalf("dial the leader of %s: %v", topic, err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, last, err := conn.ReadOffsets()
+	if err != nil {
+		t.Fatalf("read the offsets of %s: %v", topic, err)
+	}
+	return last
 }
 
 // CommittedOffset returns the offset the consumer group has committed on

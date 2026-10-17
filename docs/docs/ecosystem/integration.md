@@ -17,10 +17,12 @@ every edge**. Three words are used strictly:
   `warehouse-infra` at `61f9e7a`, fetched 2026-10-17) and matches.
 - **Absent**: no code on either side.
 
-Both consumers are built and verified against their producers, but they are
-**opt-in**: with `FULFILLMENT_MODE` / `LAYOUT_MODE` at their default
-(`permissive`) nothing is consumed. `warehouse-infra` has no entry for this
-service, so nothing starts the consumers in the shared cluster yet.
+Both consumers are built and verified against their producers and are **always
+on**: the service refuses to boot without `KAFKA_BROKERS` and the two consumer
+group ids ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
+`warehouse-infra` has no entry for this service, so no deployment of it exists
+in the shared cluster yet, and the four topics it needs are infrastructure's to
+create.
 
 ## Edge map
 
@@ -70,8 +72,7 @@ are immutable) mark the consumed `TaskAvailable` and `TaskClaimed` rows as
 "pending producer change P2". That is no longer true: both are published by
 fulfillment-execution on `origin/develop` (`TaskAvailable` by its ADR 0049 for
 RELOCATE, extended to REPLENISH by its ADR 0050; `TaskClaimed` for every task
-type), so the pool is no longer empty when `FULFILLMENT_MODE=kafka` is enabled and
-the producers run. What stays open is the hint consumer (below) and the
+type), so the pool is no longer empty once the producers run. What stays open is the hint consumer (below) and the
 announcement of PICK, PACK, SLAM and REBIN tasks.
 
 ### How every consumed message is handled
@@ -113,11 +114,10 @@ announcement of PICK, PACK, SLAM and REBIN tasks.
 
 Publication is through the transactional outbox: the aggregate row and its
 already-encoded events are written in one transaction, and the relay
-(Postgres mode with `KAFKA_BROKERS`) drains them to Kafka at least once,
+(always on) drains them to Kafka at least once,
 repeating the stored CloudEvents `id` on a retry, capped by `OUTBOX_MAX_ATTEMPTS`.
 `InterleavingHintIssued` is written to both topics with the same `id`; the
-other three types go to the analytics topic only. In-memory mode has no outbox,
-so nothing is published. Details: [Runbook](/docs/operations/runbook#outbox-relay).
+other three types go to the analytics topic only. Details: [Runbook](/docs/operations/runbook#outbox-relay).
 
 How fulfillment-execution is meant to use the hint (ADR 0001, ADR 0004; owned by
 that context, not built): only as a tie-break **inside one priority band**,

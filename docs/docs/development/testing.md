@@ -69,7 +69,8 @@ in sync by hand.
   issue, before expiry, at expiry), one Active hint per station, consumption at
   most once, and ordered domain events.
 - **Use cases** (`internal/application/usecases`): run against the in-memory
-  adapters, including injected faults (`faults_test.go`), input validation
+  adapters, which are test doubles only (the shipped binary never imports them;
+  `internal/architecture/runtime_no_memory_fitness_test.go` enforces it), including injected faults (`faults_test.go`), input validation
   (`inputs_test.go`) and the completion path (`completion_station_test.go`).
 - **HTTP adapter**: `httptest` over the real router, one file per handler group
   plus `idempotency_test.go` (replay, reuse, rollback on 4xx and 5xx, concurrent
@@ -82,7 +83,8 @@ in sync by hand.
   service's own helper.
 - **Outbox relay and events**: relay cap and ordering with a fake store,
   golden CloudEvents bytes in `outbound/events/testdata`.
-- **`cmd/api`**: env parsing (`config_test.go`), consumer planning
+- **`cmd/api`**: env parsing and boot configuration (`config_test.go`,
+  `bootconfig_test.go`), consumer planning and the supervised restart
   (`consumers_test.go`), shutdown order (`shutdown_test.go`), boot (`main_test.go`).
 
 Run one package or one test:
@@ -112,7 +114,8 @@ Postgres, and a missing Docker is a test failure, never a skip.
 
 | Suite | Package | What it proves |
 | --- | --- | --- |
-| Service over Postgres | `cmd/api` (7) | boot migrates, `Idempotency-Key` is enforced, the simulation writes no outbox row, policy `PUT` is version guarded, a rejection leaves no effect and replays, concurrent requests with one key store one answer, the expiry worker expires a hint and enqueues the fact, boot **fails closed** on an unreachable database |
+| Service over Postgres | `cmd/api` (6) | boot migrates, `Idempotency-Key` is enforced, the simulation writes no outbox row, policy `PUT` is version guarded, a rejection leaves no effect and replays, concurrent requests with one key store one answer, the expiry worker expires a hint and enqueues the fact, boot **fails closed** on an unreachable database |
+| Real entry point | `cmd/api/e2e_integration_test.go` (2) | `run()` is booted in-process on real Postgres and a real Kafka whose topic auto-creation is **off**: `/readyz` stays 503 until infrastructure creates the four topics; layout, policy, task and completion events published to Kafka produce an `InterleavingHintIssued` ranked by detour (read from REST, Postgres and the produced topic); a claim of the top candidate consumes the hint; a restart halfway and a full replay lose and duplicate nothing; the service stays alive but not ready while Kafka is unreachable |
 | Repositories and contract | `outbound/postgres` (36) | the repository contract suite (`internal/testing/repocontract`) for policies, trips, task pool, location book, processed events and the idempotency store; one Active hint per station even under racing issuers; version-guarded policy writes under races; unit-of-work rollback and nesting; outbox ordering, retry, attempt cap and trace-context headers; migrations apply, re-run as a no-op, every `down` restores the previous schema, and run from the unpooled URL only |
 | Outbox relay | `outbound/outbox` (8) | exact envelopes published for issued/consumed/expired, crash and restart without duplicates, a crash between send and mark republishes the **same id**, the attempt cap excludes a poison row, re-arming claims it again, no cap lets a poison row block later rows |
 | Consumers | `inbound/kafka` (4) | the fulfillment consumer and the layout consumer over a real Kafka and Postgres, and the no-policy case issuing no hint |

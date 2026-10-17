@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -118,4 +119,44 @@ func brokersFromEnv() []string {
 		}
 	}
 	return brokers
+}
+
+// bootConfig is the mandatory configuration of the service: real Postgres,
+// real Kafka, the two consumers' groups and the expiry interval. There is no
+// default and no degraded mode behind any of the first three.
+type bootConfig struct {
+	databaseURL   string
+	migrationsURL string
+	brokers       []string
+	consumers     []plannedConsumer
+	expiryEvery   time.Duration
+}
+
+// loadBootConfig reads and validates the whole environment. Every problem is
+// reported at once, each naming its variable, so the process fails fast at
+// boot, before it opens a connection or binds the listener.
+func loadBootConfig() (bootConfig, error) {
+	cfg := bootConfig{databaseURL: os.Getenv("DATABASE_URL"), brokers: brokersFromEnv()}
+	cfg.migrationsURL = migrationsDatabaseURL(cfg.databaseURL)
+	var errs []error
+	if cfg.databaseURL == "" {
+		errs = append(errs, errNoDatabase)
+	}
+	if len(cfg.brokers) == 0 {
+		errs = append(errs, errors.New("KAFKA_BROKERS is required: this context runs on real Kafka"))
+	}
+	consumers, err := planConsumers()
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.consumers = consumers
+	expiryEvery, err := hintExpiryInterval(os.Getenv("HINT_EXPIRY_INTERVAL"))
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.expiryEvery = expiryEvery
+	if err := errors.Join(errs...); err != nil {
+		return bootConfig{}, fmt.Errorf("invalid configuration: %w", err)
+	}
+	return cfg, nil
 }

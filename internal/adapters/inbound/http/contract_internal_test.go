@@ -113,6 +113,7 @@ func TestProblemSlugsMatchTheContract(t *testing.T) {
 
 	produced := map[string]bool{
 		internalProblem.slug: true, idempotencyKeyRequired.slug: true, idempotencyKeyReused.slug: true,
+		dependencyUnavailable.slug: true,
 	}
 	for _, entry := range problemCatalogue {
 		produced[entry.p.slug] = true

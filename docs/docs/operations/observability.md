@@ -48,8 +48,7 @@ trace-id fields.
 
 | Where | Level | `msg` (abridged) | Fields |
 | --- | --- | --- | --- |
-| Boot | INFO | `DATABASE_URL not configured; using in-memory adapters (...)`, `postgres adapters configured`, `no consumer is in kafka mode; ...`, `outbox relay off: in-memory mode has no outbox` | none |
-| Boot | WARN | `outbox relay off: KAFKA_BROKERS is not set; events accumulate in outbox_events until it is`, `consumers run over in-memory adapters (...)` | none |
+| Boot | INFO | `postgres adapters configured`, `kafka topics (owned by infrastructure; the service never creates them)` | `brokers`, `consumes`, `produces` (the last two are the topic lists) |
 | Boot | INFO | `http server listening` | `addr` |
 | Boot | INFO | `consumer running` | `consumer` (`fulfillment consumer` or `layout consumer`), `topic`, `group_id`, `brokers` |
 | Boot | INFO | `outbox relay running` | `interval`, `max_attempts`, `brokers` |
@@ -63,7 +62,9 @@ trace-id fields.
 | Consumer | WARN | `dead-lettering an event that can never be applied` / `skipping an event that can never be applied` | `consumer`, `type`, `event_id`, `error` |
 | Consumer | ERROR | `<consumer> handling failed; retrying the same message` | `error`, `partition`, `offset`, `attempt`, `max_attempts`, `retry_in` |
 | Consumer | ERROR | `<consumer> handling failed after the maximum attempts; dead-lettering the message` and `<consumer> message can never be applied; dead-lettering it without retry` | `error`, `partition`, `offset` (and `attempts`) |
-| Consumer | ERROR | `<consumer> offset commit failed; retrying the same message`, `<consumer> dead-letter publish failed; retrying the same message`, `consumer stopped`, `consumer close failed` | `error`, `partition`, `offset`, `attempt`, `retry_in` / `consumer` |
+| Consumer | ERROR | `kafka reader error; retrying` (kafka-go retrying a group join, a missing topic or an unreachable broker; without this logger it would be silent) | `consumer`, `topic`, `detail` |
+| Consumer | ERROR | `<consumer> offset commit failed; retrying the same message`, `<consumer> dead-letter publish failed; retrying the same message`, `consumer stopped; restarting` (the reader failed; the consumer runs again after 1 s), `consumer close failed` | `error`, `partition`, `offset`, `attempt`, `retry_in` / `consumer`, `restart_in` |
+| Readiness | WARN | `readiness: dependency is not ready` (once per round of checks, at most every 3 s) | `dependency` (`postgres` or `kafka`), `error` (the cause) |
 | Relay | ERROR | `outbox relay pass failed` | `error` (text starts `outbox row <id> (<type>):`) |
 | Relay | ERROR | `outbox relay: row reached the attempt cap and is excluded from future claims; ...` | `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error` |
 | Relay | ERROR | `outbox relay stopped`, `kafka relay sink close failed` | `error` |
@@ -83,9 +84,11 @@ the real error is only in the `request failed` log line.
 
 ## Probes
 
-`GET /healthz` (liveness, always 200) and `GET /readyz` (200 until shutdown
-starts, then 503) are described in the [Runbook](/docs/operations/runbook#probes).
-Neither measures a dependency.
+`GET /healthz` (liveness, always 200) and `GET /readyz` (200 only while Postgres
+answers and every consumed and produced topic has a Kafka leader; 503 once
+shutdown starts or a dependency is down) are described in the
+[Runbook](/docs/operations/runbook#probes). The cause of a failed dependency is
+only in the WARN log line above; the response body names the dependency.
 
 ## Suggested checks and alerts
 
@@ -95,7 +98,8 @@ the service database.
 
 | Signal | How to read it | Suggested alert |
 | --- | --- | --- |
-| Outbox backlog | `SELECT count(*), min(created_at) FROM outbox_events WHERE published_at IS NULL` | oldest unpublished row older than a few minutes while `KAFKA_BROKERS` is set |
+| Outbox backlog | `SELECT count(*), min(created_at) FROM outbox_events WHERE published_at IS NULL` | oldest unpublished row older than a few minutes |
+| Readiness | `GET /readyz` 503 with `dependency-unavailable`; WARN `readiness: dependency is not ready` | not ready for more than a minute |
 | Outbox rows stuck at the cap | `SELECT id, event_type, last_error FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` (use your `OUTBOX_MAX_ATTEMPTS`) | any row; also the ERROR line `row reached the attempt cap` |
 | Relay failing | log `outbox relay pass failed` | repeated for more than a minute |
 | Consumer dead letters | logs `dead-lettering` at ERROR, and the depth of `warehouse.fulfillment.events.dlq` / `warehouse.facility.events.dlq` | any message |

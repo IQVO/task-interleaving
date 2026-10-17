@@ -20,21 +20,16 @@ type worker struct {
 	done chan struct{}
 }
 
-// startOutboxRelay starts the relay goroutine when there is something to
-// relay and somewhere to send it: a Postgres outbox (store != nil) and
-// KAFKA_BROKERS. Without Postgres the service is in-memory development mode
-// and has no outbox; without brokers the rows accumulate in outbox_events
-// until the service is restarted with brokers (nothing is lost). A nil worker
-// is returned when the relay is off. Kafka is dialled lazily on the first
-// send, never here.
-func startOutboxRelay(store outboxrelay.Store, brokers []string, logger *slog.Logger) *worker {
+// startOutboxRelay starts the relay goroutine. The relay is not optional: the
+// events leave the service only through it, so a missing outbox store or
+// missing brokers is a boot error, never a silent degrade. Kafka is dialled
+// lazily on the first send, never here.
+func startOutboxRelay(store outboxrelay.Store, brokers []string, logger *slog.Logger) (*worker, error) {
 	if store == nil {
-		logger.Info("outbox relay off: in-memory mode has no outbox")
-		return nil
+		return nil, errors.New("outbox relay cannot be built: no outbox store (DATABASE_URL is required: this context runs on real Postgres)")
 	}
 	if len(brokers) == 0 {
-		logger.Warn("outbox relay off: KAFKA_BROKERS is not set; events accumulate in outbox_events until it is")
-		return nil
+		return nil, errors.New("outbox relay cannot be built: KAFKA_BROKERS is required: this context runs on real Kafka")
 	}
 	sink := outboundkafka.NewRelaySink(brokers)
 	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
@@ -51,13 +46,13 @@ func startOutboxRelay(store outboxrelay.Store, brokers []string, logger *slog.Lo
 		if err := relay.Run(ctx); !errors.Is(err, context.Canceled) {
 			logger.Error("outbox relay stopped", "error", err)
 		}
-	})
+	}), nil
 }
 
 // startExpiryWorker starts the hint-expiry worker: it calls the ExpireHints
 // use case every interval, so an Active hint past its expires_at becomes
 // Expired (and its analytics fact is enqueued) even when no claim or
-// completion arrives for the station. It runs in the in-memory mode too.
+// completion arrives for the station.
 func startExpiryWorker(sweeper expiry.Sweeper, interval time.Duration, logger *slog.Logger) *worker {
 	w := expiry.NewWorker(sweeper, logger, expiry.WithInterval(interval))
 	return launch("hint-expiry", func(ctx context.Context) {

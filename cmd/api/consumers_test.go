@@ -1,10 +1,71 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 )
+
+// An always-on consumer is run again after it stopped on a reader error (an
+// unreachable broker), and stops for good only when its context is cancelled.
+func TestSuperviseRunsAgainAfterAReaderErrorUntilCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runs, stops := 0, 0
+	boom := errors.New("failed to dial")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		supervise(ctx, func(ctx context.Context) error {
+			runs++
+			if runs == 3 {
+				cancel()
+				return ctx.Err()
+			}
+			return boom
+		}, time.Millisecond, func(err error) {
+			stops++
+			if !errors.Is(err, boom) {
+				t.Errorf("onStop got %v", err)
+			}
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervise did not return after the context was cancelled")
+	}
+	if runs != 3 || stops != 2 {
+		t.Fatalf("runs = %d, stops = %d; want 3 runs and 2 reported stops", runs, stops)
+	}
+}
+
+// A run that ends because the context is cancelled is a clean stop: no
+// restart and nothing reported.
+func TestSuperviseStopsQuietlyWhenTheContextIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	supervise(ctx, func(ctx context.Context) error { return ctx.Err() }, time.Hour, func(err error) {
+		t.Errorf("a cancelled consumer must not be reported: %v", err)
+	})
+}
+
+// The wait between two runs is cut short by the cancellation.
+func TestSuperviseDoesNotWaitOutTheDelayWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		supervise(ctx, func(context.Context) error { return errors.New("down") }, time.Hour, func(error) { cancel() })
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervise sat out the restart delay after the cancellation")
+	}
+}
 
 // setConsumerEnv sets the mode and group variables of the two consumers.
 func setConsumerEnv(t *testing.T, mode, group string) {
@@ -15,13 +76,24 @@ func setConsumerEnv(t *testing.T, mode, group string) {
 	}
 }
 
-func TestParseConsumerMode(t *testing.T) {
-	for raw, want := range map[string]string{"": modePermissive, "permissive": modePermissive, "kafka": modeKafka} {
+func TestParseConsumerModeDefaultsToKafka(t *testing.T) {
+	for _, raw := range []string{"", "kafka"} {
 		got, err := parseConsumerMode("FULFILLMENT_MODE", raw)
-		if err != nil || got != want {
-			t.Fatalf("parseConsumerMode(%q) = %q, %v; want %q", raw, got, err, want)
+		if err != nil || got != modeKafka {
+			t.Fatalf("parseConsumerMode(%q) = %q, %v; want kafka", raw, got, err)
 		}
 	}
+}
+
+func TestParseConsumerModeRejectsPermissiveWithTheFleetMessage(t *testing.T) {
+	_, err := parseConsumerMode("LAYOUT_MODE", "permissive")
+	const want = "LAYOUT_MODE=permissive is not supported: this context runs on real Kafka"
+	if err == nil || err.Error() != want {
+		t.Fatalf("permissive = %v, want exactly %q", err, want)
+	}
+}
+
+func TestParseConsumerModeRejectsAnUnknownValueNamingTheVariable(t *testing.T) {
 	_, err := parseConsumerMode("FULFILLMENT_MODE", "Kafka")
 	if err == nil || !strings.Contains(err.Error(), "FULFILLMENT_MODE") {
 		t.Fatalf("an unknown mode must be a boot error naming the variable, got %v", err)
@@ -30,61 +102,36 @@ func TestParseConsumerMode(t *testing.T) {
 
 // The env var names are part of the deployment contract (the chart and
 // .claude/rules/integration-events.md): pin them.
-func TestConsumerSpecsPinTheEnvNames(t *testing.T) {
+func TestConsumerEnvsPinTheNames(t *testing.T) {
 	var got []string
-	for _, s := range consumerSpecs() {
-		got = append(got, s.modeEnv+":"+s.groupEnv)
+	for _, e := range consumerEnvs {
+		got = append(got, e.modeEnv+":"+e.groupEnv)
 	}
 	want := "FULFILLMENT_MODE:FULFILLMENT_CONSUMER_GROUP,LAYOUT_MODE:LAYOUT_CONSUMER_GROUP"
 	if strings.Join(got, ",") != want {
-		t.Fatalf("specs = %v, want %s", got, want)
+		t.Fatalf("envs = %v, want %s", got, want)
 	}
 }
 
-func TestPlanConsumersDefaultsToPermissiveAndNeedsNothing(t *testing.T) {
-	setConsumerEnv(t, "", "")
-	planned, err := planConsumers(consumerSpecs(), nil)
-	if err != nil || len(planned) != 0 {
-		t.Fatalf("planned = %v, %v; want nothing and no error without any mode", planned, err)
-	}
-}
-
-func TestPlanConsumersKafkaModeNeedsItsGroup(t *testing.T) {
-	for _, name := range []string{"FULFILLMENT", "LAYOUT"} {
-		setConsumerEnv(t, "", "")
-		t.Setenv(name+"_MODE", "kafka")
-		_, err := planConsumers(consumerSpecs(), []string{"b:9092"})
-		if err == nil || !strings.Contains(err.Error(), name+"_CONSUMER_GROUP") {
-			t.Fatalf("%s_MODE=kafka without its group = %v, want a boot error naming %s_CONSUMER_GROUP", name, err, name)
+func TestEveryConsumerEnvHasABuilder(t *testing.T) {
+	builders := consumerBuilders(adapters{})
+	for _, e := range consumerEnvs {
+		if builders[e.modeEnv] == nil {
+			t.Errorf("no builder for %s", e.modeEnv)
 		}
 	}
-}
-
-func TestPlanConsumersKafkaModeNeedsBrokers(t *testing.T) {
-	setConsumerEnv(t, "", "")
-	t.Setenv("LAYOUT_MODE", "kafka")
-	t.Setenv("LAYOUT_CONSUMER_GROUP", "layout-group")
-	_, err := planConsumers(consumerSpecs(), nil)
-	if err == nil || !strings.Contains(err.Error(), "KAFKA_BROKERS") {
-		t.Fatalf("kafka mode without brokers = %v, want a boot error naming KAFKA_BROKERS", err)
+	if len(builders) != len(consumerEnvs) {
+		t.Errorf("%d builders for %d consumers", len(builders), len(consumerEnvs))
 	}
 }
 
-func TestPlanConsumersRejectsAnUnknownMode(t *testing.T) {
+func TestPlanConsumersPlansBothWithoutAnyMode(t *testing.T) {
 	setConsumerEnv(t, "", "")
-	t.Setenv("LAYOUT_MODE", "strict")
-	if _, err := planConsumers(consumerSpecs(), []string{"b:9092"}); err == nil {
-		t.Fatal("an unknown mode must be a boot error")
-	}
-}
-
-func TestPlanConsumersResolvesTheGroupsFromTheEnvironment(t *testing.T) {
-	setConsumerEnv(t, "kafka", "")
 	t.Setenv("FULFILLMENT_CONSUMER_GROUP", "ful-g")
 	t.Setenv("LAYOUT_CONSUMER_GROUP", "lay-g")
-	planned, err := planConsumers(consumerSpecs(), []string{"b:9092"})
+	planned, err := planConsumers()
 	if err != nil || len(planned) != 2 {
-		t.Fatalf("planned = %d, %v; want the two consumers", len(planned), err)
+		t.Fatalf("planned = %d, %v; want the two consumers, always on", len(planned), err)
 	}
 	var groups []string
 	for _, p := range planned {
@@ -95,48 +142,57 @@ func TestPlanConsumersResolvesTheGroupsFromTheEnvironment(t *testing.T) {
 	}
 }
 
-func TestStartConsumersStartsNothingInPermissiveMode(t *testing.T) {
-	setConsumerEnv(t, "", "")
-	logger, logs := quietLogger()
-	if workers := startConsumers(memoryAdapters(), nil, nil, false, logger); len(workers) != 0 {
-		t.Fatalf("workers = %d; want none", len(workers))
-	}
-	if !strings.Contains(logs.String(), "no consumer is in kafka mode") {
-		t.Fatalf("the reason must be logged: %s", logs.String())
-	}
-}
-
-// A misconfiguration is a boot error of run(), reported BEFORE any database is
-// dialled.
-func TestRunRefusesAConsumerMisconfigurationBeforeDialing(t *testing.T) {
-	setConsumerEnv(t, "", "")
-	t.Setenv("FULFILLMENT_MODE", "kafka")
-	t.Setenv("DATABASE_URL", "postgres://nobody:***@127.0.0.1:1/none?sslmode=disable&connect_timeout=1")
-	start := time.Now()
-	err := run()
-	if err == nil || !strings.Contains(err.Error(), "FULFILLMENT_CONSUMER_GROUP") {
-		t.Fatalf("run() = %v, want a boot error naming FULFILLMENT_CONSUMER_GROUP", err)
-	}
-	if time.Since(start) > 3*time.Second {
-		t.Fatalf("the config error took %v: the database was dialled first", time.Since(start))
+func TestPlanConsumersNeedsEveryGroup(t *testing.T) {
+	for _, name := range []string{"FULFILLMENT", "LAYOUT"} {
+		setConsumerEnv(t, "", "g")
+		t.Setenv(name+"_CONSUMER_GROUP", "")
+		_, err := planConsumers()
+		if err == nil || !strings.Contains(err.Error(), name+"_CONSUMER_GROUP is required") {
+			t.Fatalf("%s group missing = %v, want a boot error naming %s_CONSUMER_GROUP", name, err, name)
+		}
 	}
 }
 
-// Consumers in kafka mode run in their own goroutines and stop, closing their
-// reader and dead-letter writer, when their worker is stopped. The broker is
-// unreachable: the readers dial lazily, so boot never blocks on Kafka.
+func TestPlanConsumersRejectsPermissiveAndUnknownModes(t *testing.T) {
+	setConsumerEnv(t, "", "g")
+	t.Setenv("LAYOUT_MODE", "permissive")
+	if _, err := planConsumers(); err == nil || !strings.Contains(err.Error(), "LAYOUT_MODE=permissive is not supported") {
+		t.Fatalf("permissive = %v", err)
+	}
+	t.Setenv("LAYOUT_MODE", "strict")
+	if _, err := planConsumers(); err == nil || !strings.Contains(err.Error(), "unknown LAYOUT_MODE") {
+		t.Fatalf("unknown mode = %v", err)
+	}
+}
+
+func TestPlanConsumersReportsEveryProblemAtOnce(t *testing.T) {
+	setConsumerEnv(t, "", "")
+	t.Setenv("FULFILLMENT_MODE", "permissive")
+	_, err := planConsumers()
+	if err == nil {
+		t.Fatal("misconfiguration must be a boot error")
+	}
+	for _, want := range []string{"FULFILLMENT_MODE=permissive", "LAYOUT_CONSUMER_GROUP"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+}
+
+// Every consumer runs in its own goroutine and stops, closing its reader and
+// dead-letter writer, when its worker is stopped. The broker is unreachable:
+// the readers dial lazily, so boot never blocks on Kafka.
 func TestStartConsumersRunsAndStopsEveryConsumer(t *testing.T) {
-	setConsumerEnv(t, "kafka", "")
+	setConsumerEnv(t, "", "")
 	t.Setenv("FULFILLMENT_CONSUMER_GROUP", "ful-g")
 	t.Setenv("LAYOUT_CONSUMER_GROUP", "lay-g")
-	brokers := []string{"127.0.0.1:1"}
-	planned, err := planConsumers(consumerSpecs(), brokers)
+	planned, err := planConsumers()
 	if err != nil {
 		t.Fatal(err)
 	}
 	logger, logs := quietLogger()
 
-	workers := startConsumers(memoryAdapters(), planned, brokers, false, logger)
+	workers := startConsumers(adapters{}, []string{"127.0.0.1:1"}, planned, logger)
 	if len(workers) != 2 {
 		t.Fatalf("workers = %d; want the two consumers", len(workers))
 	}
@@ -148,7 +204,7 @@ func TestStartConsumersRunsAndStopsEveryConsumer(t *testing.T) {
 			t.Fatalf("worker %s did not stop", w.name)
 		}
 	}
-	for _, want := range []string{"in-memory adapters", "fulfillment consumer", "layout consumer"} {
+	for _, want := range []string{"fulfillment consumer", "layout consumer"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("logs lack %q:\n%s", want, logs.String())
 		}

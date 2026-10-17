@@ -17,8 +17,10 @@ The contract is `apis/asyncapi.yaml`; field-level detail is on
 
 :::info Built, with caveats
 The outbox publisher and relay (`internal/adapters/outbound/{events,outbox}`) and the
-two consumers (`internal/adapters/inbound/kafka`) are on `develop`; the relay needs
-`DATABASE_URL` and `KAFKA_BROKERS`, and each consumer is opt-in. The tables below
+two consumers (`internal/adapters/inbound/kafka`) are on `develop` and are the
+only runtime of `cmd/api`: the relay and both consumers are always on, so the
+service needs `DATABASE_URL`, `KAFKA_BROKERS` and both consumer group ids to
+boot. The tables below
 are the pinned contract, not observed traffic. Whether the other side of each edge
 exists is on [Integration](/docs/ecosystem/integration).
 :::

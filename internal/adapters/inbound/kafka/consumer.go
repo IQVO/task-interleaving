@@ -55,10 +55,16 @@ type Consumer struct {
 // an environment variable at the composition root, never a literal).
 // Constructing the reader and the writer does not dial.
 func newConsumer(name string, brokers []string, topic, groupID string, handlers map[string]HandlerFunc, logger *slog.Logger) *Consumer {
+	cfg := readerConfig(brokers, topic, groupID)
+	// kafka-go retries a failing group join, a topic that does not exist yet
+	// (infrastructure owns the topics; the service never creates them) or an
+	// unreachable broker silently unless it is given an ErrorLogger: surface
+	// every such failure as an ERROR log line, so the retry is visible.
+	cfg.ErrorLogger = readerErrorLogger(defaultLogger(logger), name, topic)
 	return &Consumer{
 		Name:              name,
 		Topic:             topic,
-		Reader:            kafkago.NewReader(readerConfig(brokers, topic, groupID)),
+		Reader:            kafkago.NewReader(cfg),
 		Handlers:          handlers,
 		Logger:            defaultLogger(logger),
 		DLQ:               newDLQWriter(brokers),

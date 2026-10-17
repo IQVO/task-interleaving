@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -45,48 +46,76 @@ func recordingWorker(name string, order *[]string) *worker {
 	return w
 }
 
-// The fleet shutdown order: SIGTERM flips /readyz, drains HTTP, then stops the
-// workers in the order given -- the consumers first, then the expiry worker,
-// which enqueues outbox rows, and the relay last. The test traps SIGTERM itself
-// first so the signal can never kill the test binary before serveUntilSignal
-// has registered.
-func TestServeUntilSignalShutsDownInOrder(t *testing.T) {
+// shutdownRig is a server whose workers record the order in which they are
+// stopped.
+type shutdownRig struct {
+	srv       *http.Server
+	readiness *inboundhttp.Readiness
+	order     []string
+	result    chan error
+}
+
+func startShutdownRig(ctx context.Context, t *testing.T) *shutdownRig {
+	t.Helper()
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
-	trap := make(chan os.Signal, 1)
-	signal.Notify(trap, syscall.SIGTERM)
-	defer signal.Stop(trap)
-
-	readiness := &inboundhttp.Readiness{}
-	srv := &http.Server{Addr: freeAddr(t), Handler: http.NewServeMux(), ReadHeaderTimeout: time.Second}
-	var order []string
+	r := &shutdownRig{
+		readiness: &inboundhttp.Readiness{},
+		srv:       &http.Server{Addr: freeAddr(t), Handler: http.NewServeMux(), ReadHeaderTimeout: time.Second},
+		result:    make(chan error, 1),
+	}
 	workers := []*worker{
-		recordingWorker("fulfillment", &order), recordingWorker("layout", &order),
-		recordingWorker("expiry", &order), nil, recordingWorker("relay", &order),
+		recordingWorker("fulfillment", &r.order), recordingWorker("layout", &r.order),
+		recordingWorker("expiry", &r.order), recordingWorker("relay", &r.order),
 	}
-
-	result := make(chan error, 1)
 	go func() {
-		result <- serveUntilSignal(discardLogger(), srv, readiness, workers)
+		r.result <- serveUntilSignal(ctx, discardLogger(), r.srv, r.readiness, workers)
 	}()
-	waitListening(t, srv.Addr)
+	waitListening(t, r.srv.Addr)
+	return r
+}
 
-	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
-		t.Fatal(err)
-	}
+func (r *shutdownRig) expectCleanShutdown(t *testing.T) {
+	t.Helper()
 	select {
-	case err := <-result:
+	case err := <-r.result:
 		if err != nil {
 			t.Fatalf("shutdown error: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("serveUntilSignal did not return after SIGTERM")
+		t.Fatal("serveUntilSignal did not return")
 	}
-	if readiness.Ready() {
+	if r.readiness.Ready() {
 		t.Fatal("/readyz must be flipped to not-ready on shutdown")
 	}
-	if strings.Join(order, ",") != "fulfillment,layout,expiry,relay" {
-		t.Fatalf("stop order = %v, want the consumers first, the expiry worker next and the relay last", order)
+	if strings.Join(r.order, ",") != "fulfillment,layout,expiry,relay" {
+		t.Fatalf("stop order = %v, want the consumers first, the expiry worker next and the relay last", r.order)
 	}
+}
+
+// The fleet shutdown order: SIGTERM flips /readyz, drains HTTP, then stops the
+// workers in the order given -- the consumers first, then the expiry worker,
+// which enqueues outbox rows, and the relay last. The test traps SIGTERM
+// itself first so the signal can never kill the test binary before
+// serveUntilSignal has registered.
+func TestServeUntilSignalShutsDownInOrder(t *testing.T) {
+	trap := make(chan os.Signal, 1)
+	signal.Notify(trap, syscall.SIGTERM)
+	defer signal.Stop(trap)
+
+	rig := startShutdownRig(context.Background(), t)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	rig.expectCleanShutdown(t)
+}
+
+// Cancelling the context given to run is the same shutdown (the in-process
+// end-to-end tests stop the service that way).
+func TestServeUntilSignalShutsDownWhenTheContextIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	rig := startShutdownRig(ctx, t)
+	cancel()
+	rig.expectCleanShutdown(t)
 }
 
 func TestServeUntilSignalReturnsAListenError(t *testing.T) {
@@ -97,7 +126,7 @@ func TestServeUntilSignalReturnsAListenError(t *testing.T) {
 	defer l.Close()
 	srv := &http.Server{Addr: l.Addr().String(), Handler: http.NewServeMux(), ReadHeaderTimeout: time.Second}
 	var order []string
-	err = serveUntilSignal(discardLogger(), srv, &inboundhttp.Readiness{},
+	err = serveUntilSignal(context.Background(), discardLogger(), srv, &inboundhttp.Readiness{},
 		[]*worker{recordingWorker("expiry", &order), recordingWorker("relay", &order)})
 	if err == nil || errors.Is(err, http.ErrServerClosed) {
 		t.Fatalf("want the listen error, got %v", err)

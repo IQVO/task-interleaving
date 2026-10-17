@@ -14,9 +14,11 @@ symptoms in [Troubleshooting](/docs/operations/troubleshooting), signals in
 
 ## Deployment
 
-**This repository ships no deployment artefact.** `git ls-files` on
-`develop` shows no `Dockerfile`, no `charts/` directory, no `docker-compose.yml`
-and no Kubernetes or Terraform manifest. Consequently:
+**This repository ships no deployment artefact for a cluster.** `git ls-files` on
+`develop` shows no `Dockerfile`, no `charts/` directory and no Kubernetes or
+Terraform manifest (the `docker-compose.yml` at the root only serves
+`make run-local`: a throwaway Postgres, Kafka and a job that creates the four
+topics; see the README note that it is not verified end to end). Consequently:
 
 - There is no Helm chart name, no Deployment, no Service, no HPA and no
   probe configuration in this repo to describe. The probe endpoints below are
@@ -42,34 +44,39 @@ What you can run today is the binary: `go build -o task-interleaving ./cmd/api`
 
 | Binary | Role | Port | Probes |
 | --- | --- | --- | --- |
-| `cmd/api` | REST API, hint-expiry worker, optional Kafka consumers, optional outbox relay (all in one process) | `HTTP_ADDR`, default `:8080` | `GET /healthz`, `GET /readyz` |
+| `cmd/api` | REST API, hint-expiry worker, the two Kafka consumers and the outbox relay (all in one process, all always on) | `HTTP_ADDR`, default `:8080` | `GET /healthz`, `GET /readyz` |
 
 ### Probes
 
 | Endpoint | Answer | Meaning |
 | --- | --- | --- |
 | `GET /healthz` | `200 {"status":"ok"}` always | Liveness. It checks nothing and is never flipped by shutdown. |
-| `GET /readyz` | `200 {"status":"ready"}`, then `503 {"status":"not_ready"}` once shutdown starts | Readiness. It **does not check Postgres or Kafka**. |
+| `GET /readyz` | `200 {"status":"ready"}` while the drain gate is open, Postgres answers a ping and every consumed and produced topic has a Kafka leader; `503 {"status":"not_ready"}` once shutdown starts; `503` `application/problem+json` `dependency-unavailable` (`not ready: kafka`, `not ready: postgres`, or `postgres, kafka`) while a dependency is down | Readiness. The dependency verdict is cached for 3 s and bounded to 2 s, so probes cannot hammer Postgres or Kafka. The body names the dependency, never the cause (the cause is the WARN log `readiness: dependency is not ready`). |
 
-Both are plain `application/json` and are described in `apis/openapi.yaml`
-(`health` tag). What readiness waits for is the **boot order**, because the
-listener is opened last:
+Both are described in `apis/openapi.yaml` (`health` tag). The boot order is:
 
-1. Configuration errors: `HINT_EXPIRY_INTERVAL`, then the consumer modes,
-   groups and `KAFKA_BROKERS`. A bad value exits with status 1 before any
-   database is dialled.
-2. With `DATABASE_URL`: the embedded migrations run (retried), then the pool
-   opens and is pinged (retried). Five attempts with 1 s, 2 s, 4 s and 8 s of
-   backoff; on exhaustion the last error is returned and the process exits 1.
-3. The workers start: consumers (if any), the expiry worker, the outbox relay
-   (if any). Kafka connections are lazy, so an unreachable broker never delays
-   boot.
-4. The HTTP server starts listening. From here `/readyz` answers 200.
+1. Configuration errors, all reported at once: `DATABASE_URL`, `KAFKA_BROKERS`,
+   both `*_CONSUMER_GROUP` variables, the consumer modes and
+   `HINT_EXPIRY_INTERVAL`. A bad or missing value exits with status 1 before
+   any database is dialled and before the listener binds.
+2. The embedded migrations run (retried), then the pool opens and is pinged
+   (retried). Five attempts with 1 s, 2 s, 4 s and 8 s of backoff; on
+   exhaustion the last error is returned and the process exits 1. The boot log
+   then names the topics the service consumes and produces.
+3. The workers start: the two consumers, the expiry worker and the outbox
+   relay. Kafka connections are lazy, so an unreachable broker never delays or
+   fails boot: the consumers log `kafka reader error; retrying` and are run
+   again after a reader failure, the relay retries its rows, and `/readyz`
+   reports `not ready: kafka` until the broker and the four topics are there.
+4. The HTTP server starts listening.
 
-So a pod answering `/readyz` has finished its migrations and reached Postgres
-once, and it keeps saying ready if Postgres or Kafka later fail. Watch the logs
-and the SQL probes in [Observability](/docs/operations/observability#suggested-checks-and-alerts)
-instead.
+So a pod that answers `/readyz` 200 has Postgres and a Kafka cluster in which
+all four topics have a leader. The service never creates topics: when one is
+missing the process keeps running and `/readyz` stays 503 until infrastructure
+creates it (verified by the end-to-end test, which boots the real `run()` on a
+broker with topic auto-creation off). Watch the logs and the SQL probes in
+[Observability](/docs/operations/observability#suggested-checks-and-alerts) for
+everything readiness cannot see.
 
 ### Shutdown order
 
@@ -90,15 +97,16 @@ shutdown drain deadline`. A message whose handling was interrupted by shutdown
 keeps its offset uncommitted and is redelivered on restart; it is never
 dead-lettered for that reason.
 
-## Modes
+## Runtime
 
-The same binary runs in two storage modes (details and the full matrix are in
-[Configuration](/docs/operations/configuration)):
-
-| Mode | Trigger | Behaviour |
-| --- | --- | --- |
-| In-memory | `DATABASE_URL` unset | All state in process memory, lost on exit. `Idempotency-Key` is **not** enforced on `POST /recommendations`. No outbox, no relay. Consumers may still run (with a WARN). |
-| Postgres | `DATABASE_URL` set | Migrations at boot, `Idempotency-Key` required on `POST /recommendations`, transactional outbox, relay when `KAFKA_BROKERS` is also set. |
+There is one runtime: real Postgres and real Kafka
+([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). There is
+no in-memory mode, no consumer that is off by default and no optional relay.
+`Idempotency-Key` is required on `POST /recommendations` in every deployment,
+the outbox and the relay are always on and `DATABASE_URL`, `KAFKA_BROKERS` and
+both consumer groups are mandatory (see
+[Configuration](/docs/operations/configuration)). The in-memory adapters exist
+only as test doubles.
 
 ## Migrations
 
@@ -109,7 +117,7 @@ The same binary runs in two storage modes (details and the full matrix are in
   `outbox_events` and `idempotency_keys` (golang-migrate adds
   `schema_migrations`). A run against an empty database recorded
   `schema_migrations` version 1, `dirty = f`.
-- **When**: at **every boot** in Postgres mode, before the pool opens
+- **When**: at **every boot**, before the pool opens
   (`postgres.RunMigrations`, `m.Up()`; "no change" is success). There is no
   separate migration job and the binary never runs the `.down.sql` file.
 - **Against which URL**: `MIGRATIONS_DATABASE_URL` if set, otherwise
@@ -125,20 +133,24 @@ The same binary runs in two storage modes (details and the full matrix are in
 ## Kafka
 
 One Kafka broker serves the whole fleet. Locally it is reachable at
-`localhost:9092` through the kind cluster's external access; the docker-compose
-Kafka is retired. Every message is a CloudEvents 1.0 structured-mode envelope
-(`internal/adapters/kafka/cloudevents`).
+`localhost:9092` through the kind cluster's external access; the fleet's
+docker-compose Kafka is retired (this repo's `docker-compose.yml` is only for
+`make run-local`). Infrastructure owns the topics: the service never creates
+one, and a missing topic keeps `/readyz` at 503. Every message is a CloudEvents
+1.0 structured-mode envelope (`internal/adapters/kafka/cloudevents`).
 
 ### Consumed
 
 | Topic | Consumer (log name) | Group id | Types handled | Dead-letter topic |
 | --- | --- | --- | --- | --- |
-| `warehouse.fulfillment.events` | `fulfillment consumer`, started by `FULFILLMENT_MODE=kafka` | value of `FULFILLMENT_CONSUMER_GROUP` | `TaskAvailable`, `TaskClaimed`, `TaskCompleted` of fulfillment-execution | `warehouse.fulfillment.events.dlq` |
-| `warehouse.facility.events` | `layout consumer`, started by `LAYOUT_MODE=kafka` | value of `LAYOUT_CONSUMER_GROUP` | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` of facility-layout | `warehouse.facility.events.dlq` |
+| `warehouse.fulfillment.events` | `fulfillment consumer`, always on (`FULFILLMENT_MODE` defaults to `kafka`) | value of `FULFILLMENT_CONSUMER_GROUP` | `TaskAvailable`, `TaskClaimed`, `TaskCompleted` of fulfillment-execution | `warehouse.fulfillment.events.dlq` |
+| `warehouse.facility.events` | `layout consumer`, always on (`LAYOUT_MODE` defaults to `kafka`) | value of `LAYOUT_CONSUMER_GROUP` | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` of facility-layout | `warehouse.facility.events.dlq` |
 
 The repository fixes **no group id value**: the deployment must pick a stable
-one per consumer. Every other CloudEvents type on those topics is ignored and
-its offset committed.
+one per consumer (both are mandatory). Every other CloudEvents type on those
+topics is ignored and its offset committed. A consumer whose reader fails (an
+unreachable broker) is run again after 1 s, so it never stays dead while the
+service is up.
 
 Per message (`internal/adapters/inbound/kafka`):
 
@@ -174,12 +186,13 @@ is written to both topics with the **same CloudEvents id**; the other three go
 to the analytics topic only. The relay's writer
 (`internal/adapters/outbound/kafka/writer.go`) does not set
 `AllowAutoTopicCreation`, and kafka-go only asks the broker to create a topic
-when that flag is set, so create both topics before enabling the relay (or
-rely on broker-side auto-creation, which is not configured in this repo).
+when that flag is set, so both topics must exist before the service starts
+(`/readyz` is 503 until they do); broker-side auto-creation is not configured in
+this repo and is off in the test broker.
 
 ### Outbox relay
 
-Enabled when `DATABASE_URL` and `KAFKA_BROKERS` are set. Events are written to
+Always on. Events are written to
 `outbox_events` in the same transaction as the aggregate; the relay
 (`internal/adapters/outbound/outbox`) drains them:
 
@@ -199,12 +212,14 @@ Enabled when `DATABASE_URL` and `KAFKA_BROKERS` are set. Events are written to
 - Delivery is at least once. The CloudEvents `id` is minted when the event is
   enqueued and stored in `outbox_events.event_id`, so a retry republishes the
   same id. Rows have a unique `(event_id, topic)`.
-- Without `KAFKA_BROKERS` the relay is off and rows accumulate (nothing is
-  lost); restart with brokers to drain them.
+- A broker outage longer than `OUTBOX_MAX_ATTEMPTS` passes (default 20 at 1 s,
+  about 20 s; observed) parks the head row at the cap: re-arm it as described
+  under Routine procedures once Kafka is back. The service refuses to boot
+  without `KAFKA_BROKERS`; it does not run without a relay.
 
 ### Hint-expiry worker
 
-Runs in both storage modes. It sweeps at once on start and then every
+Always on. It sweeps at once on start and then every
 `HINT_EXPIRY_INTERVAL` (5 s): up to 200 stations whose Active hint is at or past
 `expires_at` are expired, each in its own transaction, raising
 `InterleavingHintExpired` (analytics topic). A station whose write loses a race

@@ -24,7 +24,8 @@ type Server struct {
 
 	// Idempotency wraps the POSTs (the fleet Idempotency-Key middleware,
 	// Idempotency.Middleware, built by cmd/ over the Postgres adapters); nil
-	// leaves the routes unwrapped, which is the in-memory development mode.
+	// leaves the routes unwrapped (handler unit tests only: cmd/ always wires
+	// it).
 	Idempotency func(http.Handler) http.Handler
 	// Readiness backs GET /readyz; nil means always ready.
 	Readiness *Readiness

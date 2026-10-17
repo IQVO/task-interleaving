@@ -9,7 +9,7 @@ sidebar_position: 18
 
 The Postgres schema of the service as created by the single embedded migration,
 `migrations/0001_interleaving_schema.up.sql` ([ADR 0005](/docs/adr/0005-persistence-and-evaluation-semantics)).
-In-memory mode (no `DATABASE_URL`) keeps the same shapes in process memory.
+Postgres is the only runtime ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)); the in-memory test doubles keep the same shapes in process memory.
 
 ```mermaid
 erDiagram
