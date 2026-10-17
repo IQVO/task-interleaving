@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS idempotency_keys;
+DROP TABLE IF EXISTS outbox_events;
+DROP TABLE IF EXISTS processed_events;
+DROP TABLE IF EXISTS locations;
+DROP TABLE IF EXISTS zones;
+DROP TABLE IF EXISTS task_pool;
+DROP TABLE IF EXISTS candidates;
+ALTER TABLE station_trips DROP CONSTRAINT IF EXISTS station_trips_current_hint_fk;
+DROP TABLE IF EXISTS hints;
+DROP TABLE IF EXISTS station_trips;
+DROP TABLE IF EXISTS interleaving_policies;
