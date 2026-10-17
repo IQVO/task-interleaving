@@ -59,14 +59,16 @@ whether Postgres and Kafka are usable (next section).
 ## Readiness
 
 `GET /readyz` is 200 only when the shutdown drain gate is open **and** Postgres
-answers a ping **and** a Kafka metadata request succeeds with a leader for every
-topic the service consumes or produces (`warehouse.fulfillment.events`,
-`warehouse.facility.events`, `warehouse.task-interleaving.events`,
-`warehouse.task-interleaving.analytics`). The verdict is cached for 3 s and a
+answers a ping **and** a Kafka broker answers a metadata request that names no
+topic (reachability only). The verdict is cached for 3 s and a
 round of checks is bounded by 2 s. A failed dependency is `503`
 `application/problem+json` (`dependency-unavailable`, detail `not ready:
 kafka` or `not ready: postgres`, never the cause). `/healthz` is liveness only.
-Topics are created by infrastructure; the service never creates one.
+Topics are **not** part of readiness: the service never creates topics through
+an admin API, the cluster broker auto-creates them on first write (the relay's
+writer sets `AllowAutoTopicCreation`; infrastructure declares none), and a
+consumed topic that does not exist yet shows as consumer retry logs, never as
+`503` ([ADR 0006 Amendment 1](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
 
 ## Compiled-in settings (not configurable)
 
@@ -79,7 +81,7 @@ These are constants in the source; changing them needs a code change.
 | Postgres pool size and statement timeout | 10 connections, `statement_timeout = 5s` | `internal/adapters/outbound/postgres/pool.go` |
 | Boot retry (migrations, first ping) | 5 attempts, backoff 1 s, 2 s, 4 s, 8 s | `internal/bootretry/bootretry.go` |
 | Outbox relay batch size | 100 rows per pass | `internal/adapters/outbound/outbox/relay.go` (`DefaultBatchSize`) |
-| Kafka producer | acks=all, hash balancer on the message key, 10 ms batch timeout, no fixed topic | `internal/adapters/outbound/kafka/writer.go` |
+| Kafka producer | acks=all, hash balancer on the message key, 10 ms batch timeout, no fixed topic, `AllowAutoTopicCreation` (the broker creates a topic on first write) | `internal/adapters/outbound/kafka/writer.go` |
 | Consumer retry backoff | 200 ms doubling to a 5 s cap, at most 5 handling attempts, then the dead-letter topic `<topic>.dlq` | `internal/adapters/inbound/kafka/kafka.go`, `deadletter.go` |
 | Consumer restart after a reader error | 1 s, until the service stops | `cmd/api/consumers.go` (`consumerRestartDelay`) |
 | `/readyz` dependency cache and check timeout | 3 s verdict cache, 2 s per round of checks | `internal/adapters/inbound/http/readiness.go` |

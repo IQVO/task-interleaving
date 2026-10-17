@@ -75,10 +75,12 @@ HINT_EXPIRY_INTERVAL "soon" is not a valid duration (use a Go duration such as 5
 
 ## Run on Postgres and Kafka
 
-Start a throwaway database (use your Kafka for the broker; the four topics
-`warehouse.fulfillment.events`, `warehouse.facility.events`,
+Start a throwaway database (use your Kafka for the broker; the service never
+creates topics through an admin API: the cluster broker auto-creates
 `warehouse.task-interleaving.events` and `warehouse.task-interleaving.analytics`
-must exist: the service never creates topics):
+on the relay's first write, and the consumed `warehouse.fulfillment.events` and
+`warehouse.facility.events` exist once their producers published; a broker with
+auto-creation off needs them created by hand):
 
 ```bash
 docker run -d --rm --name ti-pg -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=ti \
@@ -94,15 +96,17 @@ HTTP_ADDR=127.0.0.1:18080 ./task-interleaving
 The group ids are yours to choose (the code has none); a fresh group replays its
 topic from the first offset, so the layout copy converges by itself. Migrations
 run at boot. The startup log (JSON lines on stdout, `time` omitted) is, in
-order: `postgres adapters configured`, `kafka topics (owned by infrastructure;
-the service never creates them)` with the `brokers`, `consumes` and `produces`
+order: `postgres adapters configured`, `kafka topics (informational; the broker
+auto-creates them on first write, the service never creates them through an
+admin API)` with the `brokers`, `consumes` and `produces`
 lists, one `consumer running` line per consumer (`topic`, `group_id`,
 `brokers`), `hint expiry worker running`, `outbox relay running` and `http
 server listening`. The [Observability](/docs/operations/observability) page lists
 every message.
 
-`/readyz` is ready only while Postgres answers and all four topics have a
-leader. With the database up and the broker **unreachable** (a real run against
+`/readyz` is ready only while Postgres answers and a Kafka broker answers a
+metadata request; topics are not checked, so it is `200` before any topic
+exists. With the database up and the broker **unreachable** (a real run against
 `KAFKA_BROKERS=127.0.0.1:1`) the process stays up and live, the consumers log
 `kafka reader error; retrying` and the probe says what is down, never why:
 
