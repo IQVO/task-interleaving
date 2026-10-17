@@ -19,24 +19,18 @@ hint only as a tie-break inside one priority band, failing open when the hint is
 absent, expired or unknown. This context never assigns work and never writes task
 state ([ADR 0001](/docs/adr/0001-task-interleaving-bounded-context)).
 
-:::caution What exists on develop today
-The service is being built on a separate branch and is **not on `develop`**.
-What `develop` carries, and what this documentation covers:
+:::info What runs on develop
+The service merged to `develop` in PR #7: one binary, `cmd/api`, with a chi REST
+adapter (RFC 7807 problems, `Idempotency-Key` middleware), Postgres repositories
+with embedded migrations, a transactional outbox with a Kafka relay, a hint-expiry
+worker, and two opt-in Kafka consumers (fulfillment-execution and facility-layout)
+with retry, a dead-letter topic and processed-event de-duplication. It runs
+in-memory without `DATABASE_URL`.
 
-- the domain: `internal/domain/{policy,travel,recommend,stationtrip}`, 100%
-  statement coverage and a 90/90 mutation gate;
-- the contracts: `apis/openapi.yaml` and `apis/asyncapi.yaml`;
-- the architecture fitness tests in `internal/architecture`;
-- two small adapter building blocks: the CloudEvents helper
-  (`internal/adapters/kafka/cloudevents`) and the acks=all Kafka writer
-  constructor (`internal/adapters/outbound/kafka`);
-- ADRs 0001 to 0004.
-
-There is no `cmd/`, no migration, no HTTP server, no Kafka consumer and no outbox
-relay on `develop`. The operations pages (configuration, runbook, observability,
-troubleshooting) and an MCP page are deliberately not written yet: there is no
-code to ground them. Where a page describes behaviour that depends on the
-service, it says *designed* and not *implemented*.
+Not built: an MCP server (`cmd/mcp`), a Helm chart, a `Dockerfile`, any
+OpenTelemetry metric or trace, and a consumer of the hint in fulfillment-execution.
+The [Runbook](/docs/operations/runbook#deployment) and
+[Integration](/docs/ecosystem/integration) pages say exactly where each edge stands.
 :::
 
 ## What the context owns
@@ -47,6 +41,7 @@ service, it says *designed* and not *implemented*.
 | **StationTrip** (one per station) | `internal/domain/stationtrip` | Where the operator stands (the end of the last completed task) and the most recent hint: `Active`, `Consumed`, `Expired` or `Superseded`. At most one Active hint. |
 | **Recommender** | `internal/domain/recommend` | Pure function: same pool in any order, same ranked candidates. Rank by detour, then task id. |
 | **Travel model** | `internal/domain/travel` | The port that measures distance; v1 is `rectilinear-v1`: `\|dx\| + \|dy\| + verticalWeight * \|dz\|`, metres, rounded to 0.1 m. Unknown geometry is *unknown*, never 0. |
+| **Local copies** | `task_pool`, `zones`, `locations` tables | Event-fed read models of the open-task pool (from fulfillment-execution) and of location geometry (from facility-layout); not aggregate state ([ADR 0003](/docs/adr/0003-local-copies-and-consumed-contracts)). |
 
 ## Classification and tier
 
@@ -56,29 +51,38 @@ service, it says *designed* and not *implemented*.
 - **WES tier**, CloudEvents subdomain segment `wes`: types look like
   `com.warehouse.wes.task-interleaving.<entity>.<EventName>`.
 
-## Main capabilities (designed)
+## Main capabilities
 
-1. Declare a per-site policy with optimistic concurrency (`PUT /sites/{siteId}/policy`).
-2. After a `TaskCompleted`, record the station's position and issue a hint of up
+1. Declare a per-site policy with optimistic concurrency
+   (`PUT /sites/{siteId}/policy`, `If-Match` / `ETag`).
+2. Keep the open-task pool and the location geometry current from Kafka
+   (`TaskAvailable`, `TaskClaimed`, `TaskCompleted`; zone, location and geometry
+   events), opt-in per consumer.
+3. After a `TaskCompleted`, record the station's position and issue a hint of up
    to five nearby open tasks.
-3. Mark the hint `Consumed` when the hinted station claims one of its candidates,
-   `Expired` at its TTL, `Superseded` when a newer hint is issued.
-4. Simulate the recommender read-only (`POST /recommendations`).
-5. Publish `InterleavingHintIssued` on `warehouse.task-interleaving.events` and
-   hint outcomes on the analytics topic.
-
-Items 1 to 5 are contract-level on `develop`: the domain rules exist, the
-use cases, REST routes and Kafka adapters that drive them do not.
+4. Mark the hint `Consumed` when the hinted station claims one of its candidates,
+   `Expired` at its TTL (swept every 5 s by default), `Superseded` when a newer
+   hint is issued.
+5. Read policies, hints and stations over REST, and simulate the recommender
+   read-only (`POST /recommendations`).
+6. Publish `InterleavingHintIssued` on `warehouse.task-interleaving.events` and
+   the hint outcomes on `warehouse.task-interleaving.analytics`, through the
+   transactional outbox.
 
 ## Where to go next
 
 | You want to | Read |
 | --- | --- |
-| See the layers, packages and the rules that police them | [Architecture](/docs/overview/architecture) |
-| Run what actually runs today | [Quickstart](/docs/overview/quickstart) |
+| See the layers, packages, binary and the rules that police them | [Architecture](/docs/overview/architecture) |
+| Run it and make the first calls | [Quickstart](/docs/overview/quickstart) |
+| Know every setting | [Configuration](/docs/operations/configuration) |
+| Deploy and operate it | [Runbook](/docs/operations/runbook), [Observability](/docs/operations/observability) |
+| Fix something that broke | [Troubleshooting](/docs/operations/troubleshooting) |
 | Know what tests and CI gates exist | [Testing](/docs/development/testing) |
 | See who talks to whom and what is built | [Integration](/docs/ecosystem/integration) |
-| See the domain operations and their invariants | [Use cases](/docs/ddd/use-cases) |
+| See the application use cases and their invariants | [Use cases](/docs/ddd/use-cases) |
 | Read the design in ddd-crew artifacts | [DDD artifacts](/docs/ddd/ddd-artifacts), [Ubiquitous language](/docs/ddd/ubiquitous-language) |
 | Read the contracts | [API overview](/docs/api-reference), [Event catalogue](/docs/api-reference/events) |
 | Read the decisions | [ADR index](/docs/adr) |
+
+Published at [https://iqvo.github.io/task-interleaving/](https://iqvo.github.io/task-interleaving/).

@@ -10,14 +10,15 @@ sidebar_position: 12
 ddd-crew [Bounded Context Canvas v5](https://github.com/ddd-crew/bounded-context-canvas),
 filled from [ADR 0001](/docs/adr/0001-task-interleaving-bounded-context) (which
 carries its own canvas), the domain code and the contracts. Every message below is
-**contract-level**: the HTTP, Kafka and outbox adapters that carry it are not on
-`develop` (see [Integration](/docs/ecosystem/integration) for the status of each).
+carried by an adapter on `develop` (REST, Kafka consumers, outbox relay); see
+[Integration](/docs/ecosystem/integration) for whether the collaborator on the
+other side has its half.
 
 ## Canvas at a glance
 
 Arrows follow the message type: **solid blue** commands (`cmd`), **dotted green**
-queries (`qry`), **thick orange** events (`evt`). Dashed boxes are designed edges
-with no counterpart built yet.
+queries (`qry`), **thick orange** events (`evt`). Dashed boxes are edges whose other
+side is not built.
 
 ### Inbound
 
@@ -43,7 +44,7 @@ flowchart LR
     end
     in0 -->|"cmd - REST<br/>Declare policy"| BC
     in0 -.->|"qry - REST<br/>Get policy, hints, station,<br/>simulate recommendation"| BC
-    in1 ==>|"evt - Kafka<br/>warehouse.fulfillment.events<br/>TaskCompleted, TaskAvailable*,<br/>TaskClaimed*"| BC
+    in1 ==>|"evt - Kafka<br/>warehouse.fulfillment.events<br/>TaskCompleted, TaskAvailable*,<br/>TaskClaimed"| BC
     in2 ==>|"evt - Kafka<br/>warehouse.facility.events<br/>ZoneRegistered, LocationSlotRegistered,<br/>LocationSlotDecommissioned,<br/>LocationGeometryUpdated"| BC
     linkStyle 0 stroke:#1971c2,stroke-width:1.5px
     linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
@@ -52,7 +53,7 @@ flowchart LR
     class BC bc
 ```
 
-`*` pending producer change P2 in fulfillment-execution.
+`*` published by fulfillment-execution for RELOCATE tasks only.
 
 ### Outbound
 
@@ -66,8 +67,8 @@ flowchart LR
     BC["<b>task-interleaving - Supporting subdomain - WES tier</b>"]:::bc
     subgraph OUT["Outbound - whom it notifies"]
         direction TB
-        out0["fulfillment-execution<br/>(tie-break inside one priority band;<br/>consumer change P3 pending)"]:::none
-        out1["own analytics side<br/>(later phase)"]:::self
+        out0["fulfillment-execution<br/>(tie-break inside one priority band;<br/>no consumer yet)"]:::none
+        out1["own analytics side<br/>(later phase, no consumer)"]:::self
     end
     BC ==>|"evt - Kafka<br/>warehouse.task-interleaving.events<br/>InterleavingHintIssued"| out0
     BC ==>|"evt - Kafka<br/>warehouse.task-interleaving.analytics<br/>all four types"| out1
@@ -77,9 +78,9 @@ flowchart LR
 ```
 
 Source: the Inbound and Outbound Communication tables of this page, which follow
-`docs/adr/0001-task-interleaving-bounded-context.md` and `apis/asyncapi.yaml`. No
-`internal/adapters/inbound` or `internal/adapters/outbound` package carries these
-messages yet.
+`docs/adr/0001-task-interleaving-bounded-context.md`, `apis/asyncapi.yaml` and the
+adapters `internal/adapters/inbound/{http,kafka}` and
+`internal/adapters/outbound/{events,outbox,kafka}`.
 
 ## Name
 
@@ -110,18 +111,18 @@ may use as a tie-break inside one priority band.
 
 | Collaborator | Message | Kind | Channel | Status |
 | --- | --- | --- | --- | --- |
-| fulfillment-execution | `TaskCompleted` | event | `warehouse.fulfillment.events` | producer verified; consumer designed |
-| fulfillment-execution | `TaskAvailable`, `TaskClaimed` | events | `warehouse.fulfillment.events` | pending producer change P2 |
-| facility-layout | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` | events | `warehouse.facility.events` | producer verified; consumer designed |
-| operator (console, agent) | Declare policy | command | `PUT /sites/{siteId}/policy` | contract only |
-| operator (console, agent) | Get policy, list hints, get hint, get station, simulate | queries | `GET /sites/{siteId}/policy`, `GET /hints`, `GET /hints/{hintId}`, `GET /stations/{stationId}`, `POST /recommendations` | contract only |
+| fulfillment-execution | `TaskCompleted` | event | `warehouse.fulfillment.events` | producer verified; consumer built (`FULFILLMENT_MODE=kafka`) |
+| fulfillment-execution | `TaskAvailable` (RELOCATE tasks only), `TaskClaimed` | events | `warehouse.fulfillment.events` | producer verified (its ADR 0049); consumer built |
+| facility-layout | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` | events | `warehouse.facility.events` | producer verified; consumer built (`LAYOUT_MODE=kafka`) |
+| operator (console, agent) | Declare policy | command | `PUT /sites/{siteId}/policy` | built |
+| operator (console, agent) | Get policy, list hints, get hint, get station, simulate | queries | `GET /sites/{siteId}/policy`, `GET /hints`, `GET /hints/{hintId}`, `GET /stations/{stationId}`, `POST /recommendations` | built |
 
 ## Outbound communication
 
 | Message | Kind | Channel | Consumers |
 | --- | --- | --- | --- |
-| `InterleavingHintIssued` | event | `warehouse.task-interleaving.events` and `warehouse.task-interleaving.analytics` | fulfillment-execution (pending consumer change P3) |
-| `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` | events | `warehouse.task-interleaving.analytics` only | the service's own analytics side (later phase) |
+| `InterleavingHintIssued` | event | `warehouse.task-interleaving.events` and `warehouse.task-interleaving.analytics` | none built: fulfillment-execution does not read it yet |
+| `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` | events | `warehouse.task-interleaving.analytics` only | none built (ADR 0004: a later phase) |
 
 Source: `apis/asyncapi.yaml`, ADR 0004.
 
@@ -163,19 +164,21 @@ From ADR 0001 and ADR 0003:
   (`TestRecommendIsIndependentOfPoolOrder`).
 - Mutation gate: 90 / 90 on the four domain packages, measured 100% / 100%.
 - Coverage gate: 90% over `internal/domain` and `internal/application`, measured
-  100% on the domain.
+  99.9% on this commit (`make coverage`).
+- BDD: 68 godog scenarios over the real use cases; integration: 55 testcontainers
+  tests ([Testing](/docs/development/testing)).
 - `TestEventCatalogueMatchesContract` keeps ADR 0004 and `apis/asyncapi.yaml` in
-  step. Golden CloudEvents tests per published type are a rule of the fleet and are
-  not on `develop` yet (no publisher).
+  step; golden CloudEvents bytes per published type live in
+  `internal/adapters/outbound/events/testdata`.
 
 ## Open questions
 
-- When does producer change P2 (`TaskAvailable`, `TaskClaimed` with `claimed_at` on
-  the integration topic) land in fulfillment-execution, and when does consumer change
-  P3 follow? Until P2 the pool is empty and no hint is issued; until P3 hints are
-  published and observable only (ADR 0001).
-- Who triggers expiry? `StationTrip.Expire(now)` exists; no ADR or contract names
-  the scheduler that calls it.
+- When does fulfillment-execution announce `TaskAvailable` for task types other than
+  RELOCATE, and when does it consume `InterleavingHintIssued`? Until the first, the
+  pool holds RELOCATE tasks only; until the second, hints are published and
+  observable only (ADR 0001).
+- Expiry is triggered by the hint-expiry worker (`HINT_EXPIRY_INTERVAL`); no ADR names
+  it, so a future ADR should record the interval as a decision.
 - Do the pool's `site_id` values equal the facility `siteCode` values, what share of
   pool locations has geometry, and is the frame the same per site (ADR 0003's
   live-data rule)?

@@ -10,8 +10,8 @@ sidebar_position: 13
 This context's slice of the fleet map, following
 [Context Mapping](https://github.com/ddd-crew/context-mapping). Relationship
 patterns come from [ADR 0001](/docs/adr/0001-task-interleaving-bounded-context);
-the **Status** column separates what the producers publish today from what is
-planned. The fleet-wide map lives in warehouse-docs.
+the **Status** column says, per edge, which side has code on its `origin/develop`
+(checked 2026-10-17). The fleet-wide map lives in warehouse-docs.
 
 ```mermaid
 flowchart LR
@@ -20,26 +20,25 @@ flowchart LR
     TI["task-interleaving<br/>(Supporting, wes)"]
     OA["warehouse-ops-agent /<br/>warehouse-console"]
     FL -- "OHS / Published Language<br/>zones, slots, geometry" --> TI
-    FE -- "Published Language<br/>TaskCompleted" --> TI
-    FE -. "Published Language<br/>TaskAvailable, TaskClaimed<br/>PLANNED: producer change P2" .-> TI
-    TI -. "Published Language<br/>InterleavingHintIssued<br/>PLANNED: consumer change P3" .-> FE
-    TI -. "Open Host Service: REST<br/>PLANNED: later waves" .-> OA
+    FE -- "Published Language<br/>TaskCompleted, TaskClaimed,<br/>TaskAvailable (RELOCATE only)" --> TI
+    TI -. "Published Language<br/>InterleavingHintIssued<br/>published, no consumer" .-> FE
+    TI -. "Open Host Service: REST<br/>built, no client" .-> OA
 ```
 
 Source: `docs/adr/0001-task-interleaving-bounded-context.md` (context map and edge
 table), `docs/adr/0003-local-copies-and-consumed-contracts.md`, `apis/asyncapi.yaml`.
-Solid arrows are contracts the producer publishes today; dotted arrows are planned
-on at least one side. Omits the contexts this one deliberately has no edge to.
+Solid arrows have code on both sides (producer publishes, consumer built and
+opt-in); dotted arrows have code on one side only. Omits the contexts this one deliberately has no edge to.
 
 ## Edges
 
 | Edge | Relationship | Status |
 | --- | --- | --- |
-| facility-layout -> task-interleaving | Open Host Service / Published Language (`ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` on `warehouse.facility.events`); task-interleaving is a **Conformist** and keeps a local location copy | Producer contract present in `facility-layout`'s `apis/asyncapi.yaml` on `origin/develop`; consumer designed, not built |
-| fulfillment-execution -> task-interleaving, `TaskCompleted` | Published Language (`warehouse.fulfillment.events`); **Conformist** | Producer contract present on `origin/develop`; consumer designed, not built |
-| fulfillment-execution -> task-interleaving, `TaskAvailable` and `TaskClaimed` | Published Language; **Conformist** | **PLANNED**: producer change P2 (consumer-first: this context ships first and accepts them). `TaskClaimed` exists today only as an analytics occurrence. |
-| task-interleaving -> fulfillment-execution | Published Language (`InterleavingHintIssued`); fulfillment-execution is a **Conformist** to the payload but owns the decision to use it (tie-break inside one priority band, fail-open) | **PLANNED**: consumer change P3 in fulfillment-execution |
-| task-interleaving -> warehouse-ops-agent, warehouse-console | **Open Host Service** (REST) | **PLANNED**: later waves; REST contract written, no server |
+| facility-layout -> task-interleaving | Open Host Service / Published Language (`ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` on `warehouse.facility.events`); task-interleaving is a **Conformist** and keeps a local location copy | Producer contract present in `facility-layout`'s `apis/asyncapi.yaml` on `origin/develop`; consumer **built** (`LAYOUT_MODE=kafka`, opt-in) |
+| fulfillment-execution -> task-interleaving, `TaskCompleted` | Published Language (`warehouse.fulfillment.events`); **Conformist** | Producer contract present on `origin/develop`; consumer **built** (`FULFILLMENT_MODE=kafka`, opt-in) |
+| fulfillment-execution -> task-interleaving, `TaskAvailable` and `TaskClaimed` | Published Language; **Conformist** | Both published on `warehouse.fulfillment.events` by fulfillment-execution (its ADR 0049); consumer **built**. `TaskAvailable` is announced **only for RELOCATE tasks** today. |
+| task-interleaving -> fulfillment-execution | Published Language (`InterleavingHintIssued`); fulfillment-execution is a **Conformist** to the payload but owns the decision to use it (tie-break inside one priority band, fail-open) | Published by this context; **no consumer** in fulfillment-execution's `origin/develop` (its ADR 0049 lists consuming it as out of scope) |
+| task-interleaving -> warehouse-ops-agent, warehouse-console | **Open Host Service** (REST) | REST API **built**; no known client and no `warehouse-infra` route |
 
 ## Deliberate non-edges
 

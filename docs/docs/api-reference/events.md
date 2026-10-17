@@ -7,7 +7,7 @@ sidebar_position: 2
 
 # Event catalogue
 
-Every Kafka message this service will produce or consume is a CloudEvents 1.0
+Every Kafka message this service produces or consumes is a CloudEvents 1.0
 event in **structured mode**: the Kafka value is the whole JSON envelope and the
 header `content-type` is `application/cloudevents+json; charset=UTF-8`. Envelopes
 are built and decoded only in `internal/adapters/kafka/cloudevents`, which is on
@@ -15,10 +15,12 @@ are built and decoded only in `internal/adapters/kafka/cloudevents`, which is on
 The contract is `apis/asyncapi.yaml`; field-level detail is on
 [Domain events](/docs/ddd/domain-events).
 
-:::caution Contract only
-No publisher, relay or consumer is on `develop` yet. The tables below are the
-pinned contract, not observed traffic. Status per row is on
-[Integration](/docs/ecosystem/integration).
+:::info Built, with caveats
+The outbox publisher and relay (`internal/adapters/outbound/{events,outbox}`) and the
+two consumers (`internal/adapters/inbound/kafka`) are on `develop`; the relay needs
+`DATABASE_URL` and `KAFKA_BROKERS`, and each consumer is opt-in. The tables below
+are the pinned contract, not observed traffic. Whether the other side of each edge
+exists is on [Integration](/docs/ecosystem/integration).
 :::
 
 ## Published
@@ -42,8 +44,8 @@ the same station replaces it.
 
 | Type | Topic | Status |
 | --- | --- | --- |
-| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | pending producer change P2 |
-| `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | pending producer change P2 |
+| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | verified on the producer's contract; announced for RELOCATE tasks only |
+| `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | verified on the producer's contract |
 | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | verified on the producer's contract |
 | `com.warehouse.wms.facility-layout.zone.ZoneRegistered` | `warehouse.facility.events` | verified on the producer's contract |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | verified on the producer's contract |
@@ -53,5 +55,6 @@ the same station replaces it.
 Every other type on those topics is ignored; a message that is not a valid
 CloudEvent is logged and skipped. Consumer groups come from the environment
 variables `FULFILLMENT_CONSUMER_GROUP` and `LAYOUT_CONSUMER_GROUP`
-([ADR 0003](/docs/adr/0003-local-copies-and-consumed-contracts)); no code reads
-them on `develop` yet.
+([ADR 0003](/docs/adr/0003-local-copies-and-consumed-contracts)); `cmd/api` reads
+them only when the matching `*_MODE` is `kafka`. A message that fails is published
+to `<topic>.dlq`; see the [Runbook](/docs/operations/runbook#consumed).
