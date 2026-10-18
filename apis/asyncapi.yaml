@@ -112,13 +112,26 @@ channels:
       (hint events) or site id (policy event). `InterleavingHintConsumed`,
       `InterleavingHintExpired` and `InterleavingPolicyDeclared` exist ONLY here.
       Not an integration contract: other contexts consume the integration topic.
+      The only consumer is this service's own `cmd/ti-projector` (ADR 0008),
+      under a fixed consumer group read from env `ANALYTICS_CONSUMER_GROUP`
+      (default `task-interleaving-analytics`), which folds the events into the
+      separate analytical database that `cmd/ti-reports` serves
+      (`GET /reports/hint-adoption`, `GET /reports/freshness`). A message the
+      projector can never apply (a known `type` whose payload contradicts its
+      envelope or fails validation) is dead-lettered at once, byte for byte, to
+      `warehouse.task-interleaving.analytics.dlq`; a transient failure retries the
+      same message and never dead-letters it.
     subscribe:
       operationId: receiveInterleavingAnalyticsEvents
       summary: Receive the interleaving analytics events.
       description: |
         Route on the full `type`; the payloads are the integration payloads for
         `InterleavingHintIssued` and the documented analytics-only payloads for the
-        other three types.
+        other three types. The projector keeps, per hint, the earliest
+        CloudEvents `time` of each of `InterleavingHintIssued`,
+        `InterleavingHintConsumed` and `InterleavingHintExpired` (arrival order
+        never matters) and records `InterleavingPolicyDeclared` only as an applied
+        id (freshness). A redelivered `id` is applied once.
       tags:
         - name: analytics
       message:

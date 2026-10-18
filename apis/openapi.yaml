@@ -50,6 +50,10 @@ tags:
     description: What the context knows about a station - its position and active hint.
   - name: Recommendations
     description: Read-only simulation of the recommender; issues nothing.
+  - name: Reports
+    description: |
+      The analytics read side (ADR 0008), served read-only by the separate
+      ti-reports binary (Service `<release>-reports`).
   - name: Health
     description: Liveness and readiness probes.
 
@@ -358,6 +362,131 @@ paths:
                 detail: "not ready: kafka"
                 instance: /readyz
 
+  /reports/hint-adoption:
+    servers:
+      - url: http://localhost:8092
+        description: ti-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getHintAdoption
+      summary: How much of the issued advice operators take, per day
+      tags: [Reports]
+      description: |
+        Do operators act on interleaving hints? `days[]` has one row per UTC
+        calendar day intersecting `[from, to)` (zeros included); a day's counts
+        cover the part of the day inside the range. `hints_issued`,
+        `hints_consumed` and `hints_expired` count the hints whose own milestone
+        (the `InterleavingHintIssued`, `InterleavingHintConsumed` and
+        `InterleavingHintExpired` event `time`) fell in the window.
+        `adoption_rate` is consumed / (consumed + expired) of the hints that
+        ended in the window, null while none did; a hint superseded by a newer
+        one emits neither ending event and is in no denominator.
+        `consumed_first_rank` counts the consumed hints whose candidate was
+        rank 1 and `mean_detour_m` is the mean detour of the consumed
+        candidates (null when none). `time_to_consume` is the issued-to-consumed
+        time of the hints consumed in the window whose issue the projection
+        also saw; `p50_seconds` / `p95_seconds` are linear-interpolated
+        percentiles and are null when `count` is 0. `siteId` narrows every
+        counter to one site (omitted = every site); `granularity` is `day` (the
+        only bucket; the default). The data is as fresh as
+        `GET /reports/freshness` says.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+        - name: siteId
+          in: query
+          required: false
+          description: Narrows every counter to one site. Omitted = every site.
+          schema:
+            type: string
+          example: SITE-1
+        - name: granularity
+          in: query
+          required: false
+          description: The time-bucket resolution; only `day` exists (the default).
+          schema:
+            type: string
+            enum: [day]
+          example: day
+      responses:
+        "200":
+          description: The adoption for the effective range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HintAdoptionReport"
+              example:
+                from: "2026-10-05T00:00:00Z"
+                to: "2026-10-07T00:00:00Z"
+                site_id: "SITE-1"
+                granularity: day
+                days:
+                  - day: "2026-10-05"
+                    hints_issued: 120
+                    hints_consumed: 54
+                    hints_expired: 40
+                    adoption_rate: 0.574
+                    consumed_first_rank: 41
+                    mean_detour_m: 6.3
+                    time_to_consume: { count: 54, p50_seconds: 21.5, p95_seconds: 74 }
+                  - day: "2026-10-06"
+                    hints_issued: 0
+                    hints_consumed: 0
+                    hints_expired: 0
+                    adoption_rate: null
+                    consumed_first_rank: 0
+                    mean_detour_m: null
+                    time_to_consume: { count: 0, p50_seconds: null, p95_seconds: null }
+        "400":
+          description: "`from` / `to` are not RFC 3339, empty or inverted, span more than 366 days, or `granularity` is not `day`."
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                invalid-report-range:
+                  value:
+                    type: https://errors.task-interleaving.warehouse-systems.dev/invalid-report-range
+                    title: from and to must form a valid RFC 3339 range of at most 366 days
+                    status: 400
+                    detail: from must be strictly before to
+                    instance: /reports/hint-adoption
+                invalid-report-granularity:
+                  value:
+                    type: https://errors.task-interleaving.warehouse-systems.dev/invalid-report-granularity
+                    title: granularity must be "day"
+                    status: 400
+                    detail: 'granularity must be "day", got "hour"'
+                    instance: /reports/hint-adoption
+        "500":
+          $ref: "#/components/responses/ReportStoreError"
+  /reports/freshness:
+    servers:
+      - url: http://localhost:8092
+        description: ti-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReportsFreshness
+      summary: How far the analytics projection is behind
+      tags: [Reports]
+      description: |
+        The freshness lag of the projection the report reads: `as_of` is the
+        CloudEvents time of the newest event the projector has applied and
+        `lag_seconds` is now minus `as_of` (never negative). Both are null
+        until the first event is applied. A growing lag means the projector is
+        down or behind, not that the report is wrong: it catches up when the
+        projector does.
+      responses:
+        "200":
+          description: The freshness (null fields while nothing was projected).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsFreshness"
+              example:
+                as_of: "2026-10-07T11:59:55Z"
+                lag_seconds: 4.2
+        "500":
+          $ref: "#/components/responses/ReportStoreError"
+
 components:
   headers:
     ETag:
@@ -367,6 +496,24 @@ components:
         example: '"3"'
 
   parameters:
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: RFC 3339 instant, inclusive. Defaults to `to` minus 30 days.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-05T00:00:00Z"
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: RFC 3339 instant, exclusive. Defaults to now. At most 366 days after `from`.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-07T00:00:00Z"
     SiteId:
       name: siteId
       in: path
@@ -444,6 +591,18 @@ components:
         maxLength: 128
 
   responses:
+    ReportStoreError:
+      description: The analytical database query failed (ti-reports only).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.task-interleaving.warehouse-systems.dev/report-store-error
+            title: The report could not be served
+            status: 500
+            detail: the analytical database query failed
+            instance: /reports/hint-adoption
     BadRequest:
       description: Malformed JSON body, an unknown field, an invalid policy value, or an invalid path or query parameter.
       content:
@@ -649,6 +808,43 @@ components:
             instance: /hints
 
   schemas:
+    HintAdoptionReport:
+      type: object
+      required: [from, to, granularity, days]
+      properties:
+        from: { type: string, format: date-time, description: The effective range start (inclusive). }
+        to: { type: string, format: date-time, description: The effective range end (exclusive). }
+        site_id: { type: string, description: The site scope; omitted when the report covers every site. }
+        granularity: { type: string, enum: [day] }
+        days:
+          type: array
+          description: One dense row per UTC calendar day intersecting the range, zeros included.
+          items: { $ref: "#/components/schemas/HintAdoptionDay" }
+    HintAdoptionDay:
+      type: object
+      required: [day, hints_issued, hints_consumed, hints_expired, adoption_rate, consumed_first_rank, mean_detour_m, time_to_consume]
+      properties:
+        day: { type: string, format: date, description: The UTC calendar day. }
+        hints_issued: { type: integer, minimum: 0, description: InterleavingHintIssued events that fell in the day's window. }
+        hints_consumed: { type: integer, minimum: 0, description: InterleavingHintConsumed events that fell in the day's window. }
+        hints_expired: { type: integer, minimum: 0, description: InterleavingHintExpired events that fell in the day's window. }
+        adoption_rate: { type: number, format: double, nullable: true, minimum: 0, maximum: 1, description: "consumed / (consumed + expired) in the window; null while no hint ended." }
+        consumed_first_rank: { type: integer, minimum: 0, description: Consumed hints whose candidate was rank 1. }
+        mean_detour_m: { type: number, format: double, nullable: true, minimum: 0, description: Mean detour in metres of the consumed candidates; null when none. }
+        time_to_consume: { $ref: "#/components/schemas/ConsumeTiming" }
+    ConsumeTiming:
+      type: object
+      required: [count, p50_seconds, p95_seconds]
+      properties:
+        count: { type: integer, minimum: 0, description: Hints consumed in the window whose issue the projection also saw. }
+        p50_seconds: { type: number, format: double, nullable: true, minimum: 0, description: Median seconds from issue to consumption; null when count is 0. }
+        p95_seconds: { type: number, format: double, nullable: true, minimum: 0, description: 95th percentile seconds from issue to consumption; null when count is 0. }
+    ReportsFreshness:
+      type: object
+      required: [as_of, lag_seconds]
+      properties:
+        as_of: { type: string, format: date-time, nullable: true, description: The CloudEvents time of the newest applied event; null until the first. }
+        lag_seconds: { type: number, format: double, nullable: true, minimum: 0, description: "now - as_of, never negative; null until the first event." }
     TaskType:
       type: string
       description: A task type an interleaving hint may point at.

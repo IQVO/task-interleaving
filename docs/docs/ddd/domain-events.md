@@ -44,10 +44,10 @@ Kafka key as below, Kafka header `content-type: application/cloudevents+json; ch
 
 | Full `type` | Topic(s) | `subject` and key | Consumers |
 | --- | --- | --- | --- |
-| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | `warehouse.task-interleaving.events`, `warehouse.task-interleaving.analytics` | station id | none built: fulfillment-execution's `origin/develop` has no consumer (its ADR 0049 and ADR 0050 list consuming it as out of scope) |
-| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintConsumed` | `warehouse.task-interleaving.analytics` | station id | none built (ADR 0004: "a later phase") |
-| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintExpired` | `warehouse.task-interleaving.analytics` | station id | none built |
-| `com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared` | `warehouse.task-interleaving.analytics` | site id | none built |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | `warehouse.task-interleaving.events`, `warehouse.task-interleaving.analytics` | station id | none built: fulfillment-execution's `origin/develop` has no consumer (its ADR 0049 and ADR 0050 list consuming it as out of scope); on the analytics topic also `ti-projector` (ADR 0008) |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintConsumed` | `warehouse.task-interleaving.analytics` | station id | `ti-projector` (own analytics read side, ADR 0008) |
+| `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintExpired` | `warehouse.task-interleaving.analytics` | station id | `ti-projector` (ADR 0008) |
+| `com.warehouse.wes.task-interleaving.policy.InterleavingPolicyDeclared` | `warehouse.task-interleaving.analytics` | site id | `ti-projector` (ADR 0008; freshness only) |
 
 ### Payloads
 
