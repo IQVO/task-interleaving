@@ -26,6 +26,8 @@ The two consumers are always ON (no *_MODE is set):
   group {{ .Values.config.fulfillmentConsumerGroup }}  <- warehouse.fulfillment.events
   group {{ .Values.config.layoutConsumerGroup }}  <- warehouse.facility.events
 
-/readyz answers 503 until Postgres answers and every consumed and produced
-topic has a leader: topics are owned by infrastructure, the service never
-creates them.
+/readyz answers 503 until Postgres answers and a Kafka broker answers a
+metadata request. Topics are not checked: the relay's writer auto-creates the
+service's own topics on first write (fleet convention), the service never
+creates them through an admin API, and a consumed topic that does not exist
+yet shows as consumer retry logs, not as unreadiness.

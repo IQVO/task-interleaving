@@ -30,10 +30,10 @@ module, and only `cmd/` wires the layers together. Everything on this page is on
 | Outbound adapter | `internal/adapters/outbound/system` | The production `Clock` and hint-id generator, the two adapters that need no infrastructure. |
 | Outbound adapter | `internal/adapters/outbound/events` | Maps domain facts to CloudEvents outbox messages (`Sink`, `encoder.go`). |
 | Outbound adapter | `internal/adapters/outbound/outbox` | The relay loop that drains the outbox to a sink. |
-| Outbound adapter | `internal/adapters/outbound/kafka` | `NewWriter` (acks=all, hash balancer, no fixed topic), `RelaySink` and `BrokerCheck` (the Kafka half of `/readyz`). |
+| Outbound adapter | `internal/adapters/outbound/kafka` | `NewWriter` (acks=all, hash balancer, no fixed topic, `AllowAutoTopicCreation`), `RelaySink` and `BrokerCheck` (the Kafka half of `/readyz`: a broker answers a topic-less metadata request). |
 | Kafka envelope | `internal/adapters/kafka/cloudevents` | The only place a CloudEvents 1.0 envelope is built or decoded: `New(Spec)`, `Decode`, `ContentTypeHeader`, `Type`, `DataSchema`. Constants `Repo = "task-interleaving"`, `Subdomain = "wes"`, `Context = "task-interleaving"`, `Source = "/warehouse/task-interleaving"`. |
 | Support | `internal/bootretry` | Exponential-backoff retry for the first outbound dials at boot. |
-| Composition root | `cmd/api` | `main.go` (run, shutdown order), `config.go` (env parsing, `loadBootConfig`), `adapters.go` (the Postgres adapters), `consumers.go`, `relay.go` (workers), `topics.go` (what `/readyz` requires). |
+| Composition root | `cmd/api` | `main.go` (run, shutdown order), `config.go` (env parsing, `loadBootConfig`), `adapters.go` (the Postgres adapters), `consumers.go`, `relay.go` (workers), `topics.go` (the consumed and produced topic lists and the boot log line; topics are not part of `/readyz`). |
 | Test support | `internal/testing/{kafkatest,pgtest,repocontract}` | Shared testcontainers helpers (the test broker has topic auto-creation off) and the repository contract suite run against both the memory and Postgres adapters. |
 | Fitness tests | `internal/architecture` | arch-go and source-scanning tests; see below. |
 
@@ -59,7 +59,7 @@ same interface under its own ADR.
 
 | Binary | Role | Port | Probes |
 | --- | --- | --- | --- |
-| `cmd/api` | The only binary. REST API, hint-expiry worker, outbox relay and the two Kafka consumers run in one process, all always on, on real Postgres and Kafka ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). | `HTTP_ADDR`, default `:8080` | `GET /healthz` (liveness), `GET /readyz` (drain gate, Postgres ping, Kafka topics have a leader) |
+| `cmd/api` | The only binary. REST API, hint-expiry worker, outbox relay and the two Kafka consumers run in one process, all always on, on real Postgres and Kafka ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). | `HTTP_ADDR`, default `:8080` | `GET /healthz` (liveness), `GET /readyz` (drain gate, Postgres ping, a Kafka broker answers a metadata request; never topics) |
 
 There is no `cmd/mcp`: this context has no MCP server. How the process boots,
 what it starts and in which order it stops is in the
@@ -150,8 +150,9 @@ and nothing is served from process memory. Kafka is the fleet's single broker;
 this service produces to `warehouse.task-interleaving.events` and
 `warehouse.task-interleaving.analytics` and consumes
 `warehouse.fulfillment.events` and `warehouse.facility.events`. It never creates
-a topic: infrastructure owns them, and `/readyz` is 503 until all four have a
-leader.
+a topic through an admin API: the cluster broker auto-creates each on first write
+(the relay's writer sets `AllowAutoTopicCreation`), infrastructure declares none,
+and `/readyz` does not wait for any topic (ADR 0006 Amendment 1).
 
 ## Rules enforced by `internal/architecture`
 

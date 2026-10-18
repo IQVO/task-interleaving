@@ -27,9 +27,11 @@ var (
 )
 
 // Brokers starts the shared broker on first use and returns its addresses.
-// The broker has topic auto-creation OFF, like the infrastructure the service
-// runs against (infra owns the topics, the service never creates them): a test
-// that needs a topic creates it explicitly (Topic / CreateTopic).
+// The broker has topic auto-creation OFF so a test controls when a topic
+// appears (the cluster broker auto-creates topics on first write, the fleet
+// convention, and the service's writers ask for it). A test that needs a topic
+// creates it explicitly (Topic / CreateTopic). The service never calls a
+// topic-admin API.
 func Brokers(t *testing.T) []string {
 	t.Helper()
 	once.Do(func() {

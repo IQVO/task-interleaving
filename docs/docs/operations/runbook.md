@@ -55,7 +55,7 @@ the real Postgres and Kafka runtime, with no in-memory mode.
   `task-interleaving` in its Terraform, so no Kong route, ArgoCD application or
   dashboard exists for it, and no values file of that repository sets the chart
   values yet. The `docker-compose.yml` at the root only serves `make run-local`
-  (a throwaway Postgres, Kafka and a job that creates the four topics; see the
+  (a throwaway Postgres, Kafka and a job that pre-creates the four topics locally; see the
   README note that it is not verified end to end).
 
 What you can run today is the binary: `go build -o task-interleaving ./cmd/api`
@@ -73,7 +73,7 @@ What you can run today is the binary: `go build -o task-interleaving ./cmd/api`
 | Endpoint | Answer | Meaning |
 | --- | --- | --- |
 | `GET /healthz` | `200 {"status":"ok"}` always | Liveness. It checks nothing and is never flipped by shutdown. |
-| `GET /readyz` | `200 {"status":"ready"}` while the drain gate is open, Postgres answers a ping and every consumed and produced topic has a Kafka leader; `503 {"status":"not_ready"}` once shutdown starts; `503` `application/problem+json` `dependency-unavailable` (`not ready: kafka`, `not ready: postgres`, or `postgres, kafka`) while a dependency is down | Readiness. The dependency verdict is cached for 3 s and bounded to 2 s, so probes cannot hammer Postgres or Kafka. The body names the dependency, never the cause (the cause is the WARN log `readiness: dependency is not ready`). |
+| `GET /readyz` | `200 {"status":"ready"}` while the drain gate is open, Postgres answers a ping and a Kafka broker answers a metadata request that names no topic (topics are never checked); `503 {"status":"not_ready"}` once shutdown starts; `503` `application/problem+json` `dependency-unavailable` (`not ready: kafka`, `not ready: postgres`, or `postgres, kafka`) while a dependency is down | Readiness. The dependency verdict is cached for 3 s and bounded to 2 s, so probes cannot hammer Postgres or Kafka. The body names the dependency, never the cause (the cause is the WARN log `readiness: dependency is not ready`). |
 
 Both are described in `apis/openapi.yaml` (`health` tag). The boot order is:
 
@@ -89,14 +89,22 @@ Both are described in `apis/openapi.yaml` (`health` tag). The boot order is:
    relay. Kafka connections are lazy, so an unreachable broker never delays or
    fails boot: the consumers log `kafka reader error; retrying` and are run
    again after a reader failure, the relay retries its rows, and `/readyz`
-   reports `not ready: kafka` until the broker and the four topics are there.
+   reports `not ready: kafka` only while the broker is unreachable (a missing
+   topic never makes it unready).
 4. The HTTP server starts listening.
 
-So a pod that answers `/readyz` 200 has Postgres and a Kafka cluster in which
-all four topics have a leader. The service never creates topics: when one is
-missing the process keeps running and `/readyz` stays 503 until infrastructure
-creates it (verified by the end-to-end test, which boots the real `run()` on a
-broker with topic auto-creation off). Watch the logs and the SQL probes in
+So a pod that answers `/readyz` 200 has Postgres and a Kafka broker that
+answers a metadata request; nothing is said about topics. **Topics play no part
+in readiness**: the broker auto-creates the service's own topics on first write
+(the relay's writer sets `AllowAutoTopicCreation`; fleet convention, infrastructure
+declares none; [ADR 0006 Amendment 1](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)),
+so a pod that waited for them could never become ready and so never publish, and a
+consumed topic exists only once its producer ran. A missing consumed topic shows
+up as consumer retry logs (`kafka reader error; retrying`, with the consumer and
+the topic) and the consumer starts reading by itself once the topic exists. The
+service never creates topics through an admin API (the end-to-end test boots the
+real `run()` on a broker with topic auto-creation off and asserts `/readyz` is
+200 before any topic exists). Watch the logs and the SQL probes in
 [Observability](/docs/operations/observability#suggested-checks-and-alerts) for
 everything readiness cannot see.
 
@@ -157,8 +165,10 @@ only as test doubles.
 One Kafka broker serves the whole fleet. Locally it is reachable at
 `localhost:9092` through the kind cluster's external access; the fleet's
 docker-compose Kafka is retired (this repo's `docker-compose.yml` is only for
-`make run-local`). Infrastructure owns the topics: the service never creates
-one, and a missing topic keeps `/readyz` at 503. Every message is a CloudEvents
+`make run-local`). The cluster broker auto-creates every business topic on first
+write and infrastructure declares none; the service never creates a topic through
+an admin API, and a missing topic never affects `/readyz` (a consumed topic that
+does not exist yet shows as consumer retry logs). Every message is a CloudEvents
 1.0 structured-mode envelope (`internal/adapters/kafka/cloudevents`).
 
 ### Consumed
@@ -206,11 +216,13 @@ The full type is `com.warehouse.wes.task-interleaving.<entity>.<EventName>`
 with entity `stationtrip` (hint events) or `policy`. `InterleavingHintIssued`
 is written to both topics with the **same CloudEvents id**; the other three go
 to the analytics topic only. The relay's writer
-(`internal/adapters/outbound/kafka/writer.go`) does not set
-`AllowAutoTopicCreation`, and kafka-go only asks the broker to create a topic
-when that flag is set, so both topics must exist before the service starts
-(`/readyz` is 503 until they do); broker-side auto-creation is not configured in
-this repo and is off in the test broker.
+(`internal/adapters/outbound/kafka/writer.go`) sets `AllowAutoTopicCreation`
+(`TestNewWriterAllowsAutoTopicCreation`), which is how the fleet creates topics:
+the cluster broker creates each business topic on the first write
+(`num.partitions=8`) and infrastructure declares none. Both topics therefore need
+not exist before the service starts and `/readyz` does not wait for them. The
+auto-creation takes effect on a real cluster only: the test broker has it off and
+the unit test covers the flag (ADR 0006 Amendment 1).
 
 ### Outbox relay
 

@@ -15,13 +15,13 @@ The service is on `develop` (merged in PR #7). One binary, `cmd/api`:
 - a transactional outbox and a Kafka relay with an attempt cap, always on;
 - a hint-expiry worker;
 - two Kafka consumers (`FULFILLMENT_MODE`, `LAYOUT_MODE`, always on; `permissive` is rejected at boot) with retry, a `<topic>.dlq` dead-letter topic and processed-event de-duplication;
-- `/readyz` that is ready only while Postgres answers and every topic the service consumes or produces has a Kafka leader.
+- `/readyz` that is ready only while Postgres answers and a Kafka broker answers a metadata request (topics are not checked: the broker auto-creates them on first write).
 
 Packaged: a `Dockerfile` and a Helm chart (`charts/task-interleaving`) that render the Postgres + Kafka runtime. Not built: an MCP server, OpenTelemetry metrics or traces, a `warehouse-infra` entry, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge.
 
 ## Run it
 
-The service needs Postgres and Kafka and refuses to boot without `DATABASE_URL`, `KAFKA_BROKERS`, `FULFILLMENT_CONSUMER_GROUP` and `LAYOUT_CONSUMER_GROUP`. `make run-local` brings both up with `docker-compose.yml` (a job creates the four topics: the service never creates topics) and runs the service on them; host ports 5432 and 9092 must be free. **Not verified end to end:** the compose file could not be exercised on the development host, where the shared kind cluster already holds host port 9092. The proof that the service runs on real Postgres and Kafka is the testcontainers end-to-end test (`make integration`), which does not use this file:
+The service needs Postgres and Kafka and refuses to boot without `DATABASE_URL`, `KAFKA_BROKERS`, `FULFILLMENT_CONSUMER_GROUP` and `LAYOUT_CONSUMER_GROUP`. `make run-local` brings both up with `docker-compose.yml` (a job pre-creates the four topics locally; on the cluster the broker auto-creates them on first write and the service never creates topics through an admin API) and runs the service on them; host ports 5432 and 9092 must be free. **Not verified end to end:** the compose file could not be exercised on the development host, where the shared kind cluster already holds host port 9092. The proof that the service runs on real Postgres and Kafka is the testcontainers end-to-end test (`make integration`), which does not use this file:
 
 ```bash
 make run-local     # docker compose up Postgres + Kafka + topics, then go run ./cmd/api

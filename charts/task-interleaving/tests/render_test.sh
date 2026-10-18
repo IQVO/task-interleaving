@@ -71,7 +71,7 @@ grep -q 'path: /healthz' <<<"$(probe_block livenessProbe "$deployment")" || fail
 grep -q 'path: /healthz' <<<"$(probe_block startupProbe "$deployment")" || fail "startupProbe must hit /healthz"
 readiness="$(probe_block readinessProbe "$deployment")"
 grep -q 'path: /readyz' <<<"$readiness" || fail "readinessProbe must hit /readyz"
-# /readyz checks Postgres AND Kafka (cached 3 s, bounded 2 s): give it a sane
+# /readyz checks Postgres AND that a Kafka broker answers (cached 3 s, bounded 2 s): give it a sane
 # delay, period, timeout and failure budget so a broker blip does not flap.
 grep -q 'initialDelaySeconds: [1-9]' <<<"$readiness" || fail "readinessProbe needs an initialDelaySeconds"
 grep -q 'periodSeconds: [1-9]' <<<"$readiness" || fail "readinessProbe needs a periodSeconds"

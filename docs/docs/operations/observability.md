@@ -48,7 +48,7 @@ trace-id fields.
 
 | Where | Level | `msg` (abridged) | Fields |
 | --- | --- | --- | --- |
-| Boot | INFO | `postgres adapters configured`, `kafka topics (owned by infrastructure; the service never creates them)` | `brokers`, `consumes`, `produces` (the last two are the topic lists) |
+| Boot | INFO | `postgres adapters configured`, `kafka topics (informational; the broker auto-creates them on first write, the service never creates them through an admin API)` | `brokers`, `consumes`, `produces` (the last two are the topic lists); topics play no part in `/readyz` |
 | Boot | INFO | `http server listening` | `addr` |
 | Boot | INFO | `consumer running` | `consumer` (`fulfillment consumer` or `layout consumer`), `topic`, `group_id`, `brokers` |
 | Boot | INFO | `outbox relay running` | `interval`, `max_attempts`, `brokers` |
@@ -62,7 +62,7 @@ trace-id fields.
 | Consumer | WARN | `dead-lettering an event that can never be applied` / `skipping an event that can never be applied` | `consumer`, `type`, `event_id`, `error` |
 | Consumer | ERROR | `<consumer> handling failed; retrying the same message` | `error`, `partition`, `offset`, `attempt`, `max_attempts`, `retry_in` |
 | Consumer | ERROR | `<consumer> handling failed after the maximum attempts; dead-lettering the message` and `<consumer> message can never be applied; dead-lettering it without retry` | `error`, `partition`, `offset` (and `attempts`) |
-| Consumer | ERROR | `kafka reader error; retrying` (kafka-go retrying a group join, a missing topic or an unreachable broker; without this logger it would be silent) | `consumer`, `topic`, `detail` |
+| Consumer | ERROR | `kafka reader error; retrying` (kafka-go retrying a group join, a consumed topic that does not exist yet because its producer has not written, or an unreachable broker; without this logger it would be silent. Not a readiness failure: the consumer recovers by itself) | `consumer`, `topic`, `detail` |
 | Consumer | ERROR | `<consumer> offset commit failed; retrying the same message`, `<consumer> dead-letter publish failed; retrying the same message`, `consumer stopped; restarting` (the reader failed; the consumer runs again after 1 s), `consumer close failed` | `error`, `partition`, `offset`, `attempt`, `retry_in` / `consumer`, `restart_in` |
 | Readiness | WARN | `readiness: dependency is not ready` (once per round of checks, at most every 3 s) | `dependency` (`postgres` or `kafka`), `error` (the cause) |
 | Relay | ERROR | `outbox relay pass failed` | `error` (text starts `outbox row <id> (<type>):`) |
@@ -85,8 +85,8 @@ the real error is only in the `request failed` log line.
 ## Probes
 
 `GET /healthz` (liveness, always 200) and `GET /readyz` (200 only while Postgres
-answers and every consumed and produced topic has a Kafka leader; 503 once
-shutdown starts or a dependency is down) are described in the
+answers and a Kafka broker answers a metadata request, never topics; 503 once
+shutdown starts or Postgres or the Kafka broker is unreachable) are described in the
 [Runbook](/docs/operations/runbook#probes). The cause of a failed dependency is
 only in the WARN log line above; the response body names the dependency.
 

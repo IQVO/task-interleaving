@@ -120,9 +120,10 @@ func buildLayoutConsumer(ad adapters, brokers []string, group string, logger *sl
 // startConsumers starts every planned consumer in its own worker. The readers
 // dial lazily inside Run, so a broker outage (or a topic that does not exist
 // yet) never blocks boot or crashes the process: the consumer logs and
-// retries, and /readyz reports not-ready until the broker and its topics are
-// there. Each worker closes its own reader and dead-letter writer once Run has
-// returned.
+// retries, and /readyz reports not-ready only while the broker is unreachable
+// (a missing topic shows as consumer retry logs, never as a readiness
+// failure). Each worker closes its own reader and dead-letter writer once Run
+// has returned.
 func startConsumers(ad adapters, brokers []string, planned []plannedConsumer, logger *slog.Logger) []*worker {
 	builders := consumerBuilders(ad)
 	workers := make([]*worker, 0, len(planned))
