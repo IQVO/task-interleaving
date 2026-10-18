@@ -218,3 +218,110 @@ terminationGracePeriodSeconds: 60
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# ---------------------------------------------------------------------------
+# Optional components, each its OWN Deployment + Service (component label).
+# All default OFF: a default render is the api alone.
+# ---------------------------------------------------------------------------
+
+# cmd/mcp (ADR 0007): the read-only MCP server (Streamable HTTP on /mcp). It
+# reads the OLTP database through the existing queries and writes nothing: no
+# outbox relay, no consumer, no Kafka. No auth, by fleet decision: the
+# in-cluster ClusterIP boundary is the access control.
+mcp:
+  enabled: false
+  replicaCount: 1
+  httpAddr: ":8090"                  # MCP_ADDR
+  service:
+    type: ClusterIP
+    port: 8090
+    targetPort: 8090
+  # Kong exposure: /api/mcp/task-interleaving -> Service :8090, prefix
+  # rewritten to /mcp. Needs the Gateway parentRef from warehouse-infra.
+  route:
+    enabled: false
+    path: "/api/mcp/task-interleaving"
+    parentRefs:
+      - name: ""
+        namespace: ""
+        sectionName: "http"
+  extraEnv: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# The analytics read side (ADR 0008): ti-projector (the only writer of the
+# analytical database, fed by warehouse.task-interleaving.analytics) and
+# ti-reports (read-only: GET /reports/hint-adoption and /reports/freshness).
+# The analytical database is SEPARATE from the OLTP one. MANDATORY when
+# enabled: analytics.url or analytics.existingSecret. The projector reuses
+# kafka.brokers; ti-reports never dials Kafka.
+analytics:
+  enabled: false
+  url: ""
+  existingSecret: ""
+  existingSecretKey: "ANALYTICS_DATABASE_URL"
+  # STABLE group id of the projector (ANALYTICS_CONSUMER_GROUP). Do not rename
+  # it in a running environment: a new group id re-reads the topic from the start.
+  consumerGroup: "task-interleaving-analytics"
+  projector:
+    replicaCount: 1
+    adminAddr: ":8091"               # ADMIN_ADDR: /healthz and /readyz
+    adminPort: 8091
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    extraEnv: []
+  reports:
+    replicaCount: 1
+    httpAddr: ":8092"                # HTTP_ADDR
+    service:
+      type: ClusterIP
+      port: 80
+      targetPort: 8092
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    extraEnv: []
+
+# web/ (task_interleaving_mfe): the Module Federation remote served by its own
+# nginx pod, reached through warehouse-infra's Nginx web gateway at
+# /mfes/task-interleaving/. Never routed by this chart; ClusterIP only.
+frontend:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: warehouse/task-interleaving-frontend
+    pullPolicy: IfNotPresent
+    tag: ""
+  service:
+    port: 80
+    targetPort: 8080
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    fsGroup: 101
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi

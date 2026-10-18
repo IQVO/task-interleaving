@@ -16,11 +16,14 @@ This test is the sensor for that decision. It fails if:
     the request reaches the service (the service serves /recommendations, ... at
     the root),
   * the CORS plugin allows "*" or does not allow the Idempotency-Key header
-    the POST commands send,
+    the POST commands send or the If-Match header the policy PUT sends,
+  * the MCP route (when enabled) does not match /api/mcp/task-interleaving,
+    does not rewrite to /mcp, or lacks the plugin annotation,
   * defaults (no --set flags beyond the mandatory runtime values) render any
     Kong object at all — standalone installs without Kong must be unaffected.
 
-This context has one API and no MCP, reports or web route.
+The API route and the optional MCP route (/api/mcp/task-interleaving -> /mcp)
+are the only Kong routes: reports and the web remote are never routed here.
 
 Run: python3 charts/task-interleaving/tests/test_kong_config.py
 """
@@ -54,7 +57,14 @@ ENABLE_KONG = MANDATORY + [
     "--set", "kongPlugins.cors.enabled=true",
     "--set", "kongPlugins.prometheus.enabled=true",
     "--set", "kongPlugins.opentelemetry.enabled=true",
+    "--set", "mcp.enabled=true",
+    "--set", "mcp.route.enabled=true",
+    "--set", "mcp.route.parentRefs[0].name=warehouse-gateway",
+    "--set", "mcp.route.parentRefs[0].namespace=kong",
 ]
+
+API_PREFIX, API_TARGET = "/api/task-interleaving", "/"
+MCP_PREFIX, MCP_TARGET = "/api/mcp/task-interleaving", "/mcp"
 
 
 def render(extra_args: list[str]) -> list[dict]:
@@ -84,21 +94,24 @@ def check_routes(routes: list[dict], plugins: dict[str, dict], failures: list[st
             for plugin in ann.split(","):
                 if plugin not in plugins:
                     failures.append(f"HTTPRoute {name} references plugin '{plugin}' that the chart does not render")
+        is_mcp = name.endswith("-mcp")
         for rule in r.get("spec", {}).get("rules", []):
-            check_rule(name, rule, failures)
+            check_rule(name, rule, MCP_PREFIX if is_mcp else API_PREFIX, MCP_TARGET if is_mcp else API_TARGET, failures)
+    if sorted(r["metadata"]["name"] for r in routes) != [RELEASE, f"{RELEASE}-mcp"]:
+        failures.append("expected exactly the api and the mcp HTTPRoute")
 
 
-def check_rule(name: str, rule: dict, failures: list[str]) -> None:
+def check_rule(name: str, rule: dict, want_prefix: str, want_target: str, failures: list[str]) -> None:
     prefix = rule["matches"][0]["path"]["value"]
-    if prefix != "/api/task-interleaving":
-        failures.append(f"HTTPRoute {name} matches {prefix!r}, expected '/api/task-interleaving'")
+    if prefix != want_prefix:
+        failures.append(f"HTTPRoute {name} matches {prefix!r}, expected {want_prefix!r}")
     rewrites = [f for f in rule.get("filters", []) if f.get("type") == "URLRewrite"]
     if len(rewrites) != 1:
         failures.append(f"HTTPRoute {name} must strip its prefix with exactly one URLRewrite filter")
         return
     target = rewrites[0]["urlRewrite"]["path"].get("replacePrefixMatch")
-    if target != "/":
-        failures.append(f"HTTPRoute {name} rewrites to {target!r}, expected '/' (the service serves at the root)")
+    if target != want_target:
+        failures.append(f"HTTPRoute {name} rewrites to {target!r}, expected {want_target!r}")
 
 
 def check_plugins(plugins: dict[str, dict], failures: list[str]) -> None:
@@ -118,6 +131,8 @@ def check_plugins(plugins: dict[str, dict], failures: list[str]) -> None:
         failures.append("the cors plugin allows origin '*': endpoints are unauthenticated, use the exact origin")
     if "Idempotency-Key" not in cfg.get("headers", []):
         failures.append("the cors plugin must allow the Idempotency-Key request header the commands send")
+    if "If-Match" not in cfg.get("headers", []):
+        failures.append("the cors plugin must allow the If-Match request header the policy edit sends")
 
 
 def main() -> int:
@@ -146,7 +161,7 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print(f"PASS: {len(routes)} HTTPRoute annotated and stripping its prefix, {len(plugins)} KongPlugins, "
+    print(f"PASS: {len(routes)} HTTPRoutes (api, mcp) annotated and stripping their prefix, {len(plugins)} KongPlugins, "
           "no auth plugin, defaults are a no-op")
     return 0
 

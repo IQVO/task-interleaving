@@ -149,3 +149,45 @@ Empty string (annotation omitted) when none are enabled.
 {{- end -}}
 {{- join "," $names -}}
 {{- end -}}
+
+{{/*
+Fully qualified names of the optional workloads. Each is its own Deployment +
+Service pair, pinned by app.kubernetes.io/component (tests/test_service_selectors.py).
+*/}}
+{{- define "task-interleaving.mcpFullname" -}}
+{{- include "task-interleaving.fullname" . }}-mcp
+{{- end }}
+
+{{- define "task-interleaving.analyticsProjectorFullname" -}}
+{{- include "task-interleaving.fullname" . }}-analytics-projector
+{{- end }}
+
+{{- define "task-interleaving.analyticsReportsFullname" -}}
+{{- include "task-interleaving.fullname" . }}-analytics-reports
+{{- end }}
+
+{{/*
+Name of the Secret holding ANALYTICS_DATABASE_URL: the operator's own
+(analytics.existingSecret) or the one this chart creates from analytics.url.
+*/}}
+{{- define "task-interleaving.analyticsSecretName" -}}
+{{- if .Values.analytics.existingSecret -}}
+{{- .Values.analytics.existingSecret -}}
+{{- else -}}
+{{- include "task-interleaving.fullname" . }}-analytics
+{{- end -}}
+{{- end }}
+
+{{/*
+analytics.enabled needs the analytical DSN: ti-projector and ti-reports exit at
+boot without ANALYTICS_DATABASE_URL (ADR 0008). Kafka brokers are mandatory for
+the whole chart already (requireKafka), which the projector reuses.
+*/}}
+{{- define "task-interleaving.requireAnalyticsConfig" -}}
+{{- if not (or .Values.analytics.url .Values.analytics.existingSecret) -}}
+{{- fail "analytics.enabled is true but neither analytics.url nor analytics.existingSecret is set — ti-projector and ti-reports exit at boot without ANALYTICS_DATABASE_URL (ADR 0008)." -}}
+{{- end -}}
+{{- if not .Values.analytics.consumerGroup -}}
+{{- fail "analytics.enabled is true but analytics.consumerGroup is empty — ti-projector needs a stable ANALYTICS_CONSUMER_GROUP so a rescheduled pod resumes from its committed offsets (ADR 0008)." -}}
+{{- end -}}
+{{- end -}}
