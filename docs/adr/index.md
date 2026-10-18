@@ -19,3 +19,4 @@ one. The *Status* column is copied from each ADR's own `## Status` section.
 | [0004](/docs/adr/0004-cloudevents-envelope-and-type-catalogue) | CloudEvents envelope and type catalogue | Accepted (2026-10-17) |
 | [0005](/docs/adr/0005-persistence-and-evaluation-semantics) | persistence and evaluation semantics | Accepted (2026-10-17) |
 | [0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime) | Postgres and Kafka are the only runtime | Accepted (2026-10-17) |
+| [0007](/docs/adr/0007-mcp-server-adoption) | a read-only MCP server | Accepted (2026-10-18) |
