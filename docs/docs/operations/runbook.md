@@ -330,5 +330,21 @@ are left in Kafka.
 The declaration enqueues `InterleavingPolicyDeclared` (analytics). A stale
 `If-Match` is `412 version-mismatch`.
 
-There is no `*-reports` binary and no `/reports/...` route in this service, so
-no analytics endpoint needs documenting beyond `apis/openapi.yaml`.
+**Analytics and reports.** `cmd/ti-projector` consumes
+`warehouse.task-interleaving.analytics` into the analytical database
+(`ANALYTICS_DATABASE_URL`, separate from `DATABASE_URL`) and `cmd/ti-reports`
+serves `GET /reports/hint-adoption` and `GET /reports/freshness` from it
+(in-cluster, port 8092). Enable both with `analytics.enabled=true` plus
+`analytics.url` or `analytics.existingSecret`. The projector reuses
+`kafka.brokers`, uses the stable group `task-interleaving-analytics` and exits
+non-zero if its consumer stops, so a stuck projector restarts instead of
+answering `/readyz` 200 ([ADR 0008](/docs/adr/0008-analytics-read-side)).
+
+**MCP.** `mcp.enabled=true` renders the read-only `cmd/mcp` Deployment and
+Service (port 8090); `mcp.route.enabled=true` publishes it through Kong at
+`/api/mcp/task-interleaving`.
+
+**Web remote.** `frontend.enabled=true` renders the nginx Deployment and a
+ClusterIP Service for `task_interleaving_mfe`; the Nginx web gateway in
+`warehouse-infra` owns `/mfes/task-interleaving/`. Kong's CORS plugin allows
+`If-Match`, which the policy edit sends.

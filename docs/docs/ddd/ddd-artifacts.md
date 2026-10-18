@@ -41,9 +41,11 @@ the code disagree, the page is wrong.
 :::
 
 :::info Not in this pack
-`develop` has no MCP server, no web remote and no deployment manifest for this
-context, so there are no pages for them. The application layer, the HTTP and
-Kafka adapters, the outbox relay and the database schema are built and are
-covered by the pages above; where an edge to another context is only built on one
-side, the page says so.
+The MCP server ([ADR 0007](/docs/adr/0007-mcp-server-adoption)), the analytics
+read side ([ADR 0008](/docs/adr/0008-analytics-read-side)) and the web remote
+(`web/`) are built, but they are read surfaces over the model and add no
+aggregate, entity or event of their own, so the pack has no pages for them. The
+application layer, the HTTP and Kafka adapters, the outbox relay and the database
+schema are covered by the pages above; where an edge to another context is only
+built on one side, the page says so.
 :::

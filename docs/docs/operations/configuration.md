@@ -93,6 +93,15 @@ These are constants in the source; changing them needs a code change.
 | Topics consumed | `warehouse.fulfillment.events`, `warehouse.facility.events` | `internal/adapters/inbound/kafka/fulfillment_consumer.go`, `layout_consumer.go` |
 | Consumer names in `processed_events` | `task-interleaving-fulfillment`, `task-interleaving-layout` (not Kafka group ids) | `internal/application/usecases/intake.go` |
 
+## Other binaries
+
+| Binary | Variables | Notes |
+| --- | --- | --- |
+| `cmd/mcp` | `MCP_ADDR` (default `:8090`), `LOG_LEVEL`, `DATABASE_URL` (required), `MIGRATIONS_DATABASE_URL` | Read-only MCP over the OLTP database; starts no relay, consumer or worker ([ADR 0007](/docs/adr/0007-mcp-server-adoption)). |
+| `cmd/ti-projector` | `ANALYTICS_DATABASE_URL` and `KAFKA_BROKERS` (required), `ANALYTICS_CONSUMER_GROUP` (default `task-interleaving-analytics`), `ADMIN_ADDR` (default `:8091`), `LOG_LEVEL` | The only writer of the analytical database; never opens the OLTP one ([ADR 0008](/docs/adr/0008-analytics-read-side)). |
+| `cmd/ti-reports` | `ANALYTICS_DATABASE_URL` (required), `HTTP_ADDR` (default `:8092`), `LOG_LEVEL` | Read-only; never dials Kafka. |
+| `web/` | runtime `window.__WAREHOUSE_CONFIG__.apiOrigin`, set by the console shell | Calls only `<apiOrigin>/api/task-interleaving`. |
+
 ## What is deliberately absent
 
 - **No OpenTelemetry or metrics variables.** The binary reads no `OTEL_*`
@@ -100,7 +109,7 @@ These are constants in the source; changing them needs a code change.
 - **No auth variables.** REST is unauthenticated fleet-wide;
   `TestNoAuthMiddlewareReintroduced` fails the build if a bearer or JWT check
   appears under `internal/adapters/inbound`.
-- **No MCP variables.** There is no `cmd/mcp`.
+- **No MCP auth or write variables.** `cmd/mcp` reads only `MCP_ADDR`, `LOG_LEVEL`, `DATABASE_URL` and `MIGRATIONS_DATABASE_URL`; it has no Kafka variable.
 - **No CORS, rate-limit or feature-flag variables.**
 - **Chart values.** `charts/task-interleaving` maps these variables onto the pod
   (`database.*`, `kafka.brokers`, `config.*`; see

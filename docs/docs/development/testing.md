@@ -20,7 +20,7 @@ Kafka, architecture fitness tests, and spec linting.
 | Coverage gate | 90% over `./internal/domain/...,./internal/application/...`; measured 99.9% on this commit | `make coverage` |
 | BDD (godog / Gherkin) | 6 feature files, **68 scenarios** (64 `Scenario` blocks, one of which is an outline with 5 example rows), 608 steps; all pass | `make bdd` |
 | Integration (testcontainers) | 55 top-level tests behind `//go:build integration`: `cmd/api` 7, `inbound/kafka` 4, `outbound/outbox` 8, `outbound/postgres` 36 | `make integration` |
-| Architecture fitness | 22 top-level test functions in `internal/architecture` (one, the MCP optional-inputs sensor, skips because there is no MCP adapter) | `make arch-test` |
+| Architecture fitness | 29 top-level test functions in `internal/architecture` (none skips) | `make arch-test` |
 | Mutation (gremlins) | efficacy 90, mutant coverage 90 (`.gremlins.yaml`); measured 100% / 100% on the four domain packages | `make mutation`, `make mutation-full` |
 | Spec linting (Spectral) | OpenAPI and AsyncAPI, `--fail-severity=warn` | CI `api-lint` |
 | Contract (schemathesis) | **none**: no schemathesis configuration and no CI job. Response shapes are checked against the OpenAPI document by a Go test instead (`internal/adapters/inbound/http/shape_test.go`) | none |
@@ -152,8 +152,7 @@ surviving mutant. A failing scheduled run opens or refreshes a `harness:red` iss
 sensors listed with their rules on [Architecture](/docs/overview/architecture#rules-enforced-by-internalarchitecture).
 Each sensor that scans source also has a test that proves it can fail
 (`...SensorBites`, `...SensorFailsOnBadFixtures`, `TestEventCatalogueDetector`).
-Only `TestMCPOptionalToolInputsCarryOmitempty` skips (there is no MCP adapter);
-`go test` prints the reason.
+No sensor skips: the MCP sensors run against `internal/adapters/inbound/mcp`.
 
 ```bash
 make arch-test

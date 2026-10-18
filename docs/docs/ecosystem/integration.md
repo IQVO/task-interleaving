@@ -148,7 +148,10 @@ in the cluster until `warehouse-infra` installs the chart.
   only as `TaskAvailable` occurrences, like any other announced task type (announced
   since fulfillment-execution's ADR 0050).
 - **No per-worker data.** Hints are per station; the associate is not an input.
-- No `cmd/mcp` and no MCP tool: nothing in the contracts names one.
+- The MCP server (`cmd/mcp`, ADR 0007) is inbound and read-only: it calls no
+  sibling and exposes no write tool.
+- The web remote calls only this context's own `/api/task-interleaving`: no
+  sibling context and not the reports service.
 
 ## Failure behaviour
 

@@ -17,7 +17,13 @@ The service is on `develop` (merged in PR #7). One binary, `cmd/api`:
 - two Kafka consumers (`FULFILLMENT_MODE`, `LAYOUT_MODE`, always on; `permissive` is rejected at boot) with retry, a `<topic>.dlq` dead-letter topic and processed-event de-duplication;
 - `/readyz` that is ready only while Postgres answers and a Kafka broker answers a metadata request (topics are not checked: the broker auto-creates them on first write).
 
-Packaged: a `Dockerfile` and a Helm chart (`charts/task-interleaving`) that render the Postgres + Kafka runtime. Not built: an MCP server, OpenTelemetry metrics or traces, a `warehouse-infra` entry, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge.
+Also built, each its own binary and its own chart component (all off by default):
+
+- `cmd/mcp`: a read-only MCP server (Streamable HTTP, `/mcp`, port 8090) with `get_site_policy`, `list_hints`, `get_hint` and `get_station` over the existing queries; no write tool, no Kafka ([ADR 0007](docs/adr/0007-mcp-server-adoption.md));
+- `cmd/ti-projector` and `cmd/ti-reports`: the analytics read side over a separate analytical database, fed by `warehouse.task-interleaving.analytics`; `GET /reports/hint-adoption` and `GET /reports/freshness` ([ADR 0008](docs/adr/0008-analytics-read-side.md));
+- `web/`: the `task_interleaving_mfe` Module Federation remote (hints, stations, site policy with `If-Match`), served by its own nginx image and calling only `/api/task-interleaving`.
+
+Packaged: a `Dockerfile` that builds every `cmd/*` binary, a web image (`web/Dockerfile`) and a Helm chart (`charts/task-interleaving`) that render the Postgres + Kafka runtime plus the optional mcp, analytics and frontend components. Not built: OpenTelemetry metrics or traces, a `warehouse-infra` entry, the shell's entry for the remote in `warehouse-console`, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge. The Runbook and Integration pages give the exact state of each edge.
 
 ## Run it
 
@@ -89,8 +95,8 @@ Published at <https://iqvo.github.io/task-interleaving/> (built from `docs/` by 
 | Subdomain classification | [`docs/docs/ddd/subdomain-classification.md`](docs/docs/ddd/subdomain-classification.md) | Supporting, WES tier, neighbours from the fleet table |
 | DDD artifacts | [`docs/docs/ddd/ddd-artifacts.md`](docs/docs/ddd/ddd-artifacts.md) | Index of the 11-page ddd-crew pack (core domain chart, canvas, context map, aggregate canvas, message flow, EventStorming, language, class, ER, sequence, events) |
 | API reference | [`docs/docs/api-reference/overview.md`](docs/docs/api-reference/overview.md), [`events.md`](docs/docs/api-reference/events.md) | REST (generated from `apis/openapi.yaml`) and event catalogue |
-| ADRs | [`docs/adr/index.md`](docs/adr/index.md) | Decisions 0001 to 0006 with status |
+| ADRs | [`docs/adr/index.md`](docs/adr/index.md) | Decisions 0001 to 0008 with status |
 
-There is no MCP page because there is no `cmd/mcp`.
+The MCP server and the analytics read side are described in ADRs 0007 and 0008; the REST pages include the two `/reports/...` operations served by `cmd/ti-reports`.
 
 Build the site locally: `cd docs && npm ci && npm run build`.
