@@ -1,0 +1,481 @@
+[
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read one interleaving hint by id: stationId, siteId, state (Active, Consumed, Expired or Superseded), the task it follows (afterTaskId) and the origin location, issuedAt and expiresAt, the policyVersion it was ranked under, its ranked candidates, and consumedTaskId/consumedAt or supersededAt once it ended. Read-only; fails with hint-not-found for an unknown id and invalid-hint-id for a malformed one.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "hintId": {
+          "description": "the hint id, e.g. hint-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hintId"
+      ],
+      "type": "object"
+    },
+    "name": "get_hint",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "afterTaskId": {
+          "type": "string"
+        },
+        "candidates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "detourM": {
+                "type": "number"
+              },
+              "location": {
+                "type": "string"
+              },
+              "rank": {
+                "type": "integer"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "taskType": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "rank",
+              "taskId",
+              "taskType",
+              "location",
+              "detourM"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "consumedAt": {
+          "type": "string"
+        },
+        "consumedTaskId": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "hintId": {
+          "type": "string"
+        },
+        "issuedAt": {
+          "type": "string"
+        },
+        "originLocation": {
+          "type": "string"
+        },
+        "policyVersion": {
+          "type": "integer"
+        },
+        "siteId": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "stationId": {
+          "type": "string"
+        },
+        "supersededAt": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hintId",
+        "stationId",
+        "siteId",
+        "state",
+        "afterTaskId",
+        "originLocation",
+        "issuedAt",
+        "expiresAt",
+        "policyVersion",
+        "candidates",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read the interleaving policy a site declared: maxDetourM (the farthest a candidate may lie from the station), maxCandidates (1..5), hintTtlSeconds, eligibleTaskTypes, verticalWeight, version and declaredAt. A site that never declared a policy is inert (no hint is ever issued for it) and fails with policy-not-found. Read-only; a malformed site fails with invalid-site-id.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "siteId": {
+          "description": "the site whose interleaving policy to read, e.g. SITE-1",
+          "type": "string"
+        }
+      },
+      "required": [
+        "siteId"
+      ],
+      "type": "object"
+    },
+    "name": "get_site_policy",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "declaredAt": {
+          "type": "string"
+        },
+        "eligibleTaskTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "hintTtlSeconds": {
+          "type": "integer"
+        },
+        "maxCandidates": {
+          "type": "integer"
+        },
+        "maxDetourM": {
+          "type": "number"
+        },
+        "siteId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "verticalWeight": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "siteId",
+        "maxDetourM",
+        "maxCandidates",
+        "hintTtlSeconds",
+        "eligibleTaskTypes",
+        "verticalWeight",
+        "version",
+        "declaredAt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read what the service knows about a station: its site, its position (location code and the point in metres when the geometry is known), the last task it completed and when, and its active hint if it holds one (the short form: hintId, state, issuedAt, expiresAt, policyVersion, candidates). Read-only; fails with station-not-found when no completion was recorded for the station and invalid-station-id for a malformed id.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "stationId": {
+          "description": "the station to read, e.g. STN-07",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stationId"
+      ],
+      "type": "object"
+    },
+    "name": "get_station",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "activeHint": {
+          "additionalProperties": false,
+          "properties": {
+            "candidates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "detourM": {
+                    "type": "number"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "rank": {
+                    "type": "integer"
+                  },
+                  "taskId": {
+                    "type": "string"
+                  },
+                  "taskType": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "rank",
+                  "taskId",
+                  "taskType",
+                  "location",
+                  "detourM"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "expiresAt": {
+              "type": "string"
+            },
+            "hintId": {
+              "type": "string"
+            },
+            "issuedAt": {
+              "type": "string"
+            },
+            "policyVersion": {
+              "type": "integer"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "hintId",
+            "state",
+            "issuedAt",
+            "expiresAt",
+            "policyVersion",
+            "candidates"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "lastCompletedAt": {
+          "type": "string"
+        },
+        "lastCompletedTaskId": {
+          "type": "string"
+        },
+        "position": {
+          "additionalProperties": false,
+          "properties": {
+            "location": {
+              "type": "string"
+            },
+            "point": {
+              "additionalProperties": false,
+              "properties": {
+                "xM": {
+                  "type": "number"
+                },
+                "yM": {
+                  "type": "number"
+                },
+                "zM": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "xM",
+                "yM",
+                "zM"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            }
+          },
+          "required": [
+            "location"
+          ],
+          "type": "object"
+        },
+        "siteId": {
+          "type": "string"
+        },
+        "stationId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stationId",
+        "siteId",
+        "position",
+        "lastCompletedTaskId",
+        "lastCompletedAt",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List interleaving hints newest first, a page at a time, optionally only those issued to one station (stationId), of one site (siteId) and/or in one state (Active, Consumed, Expired or Superseded). Each hint carries its ranked candidates (rank, taskId, taskType, location, detourM) and how it ended. Pass the returned nextCursor to get the next page; it is absent on the last page. Read-only; a bad limit fails with invalid-limit, a bad cursor with invalid-cursor, an unknown state with invalid-state and a malformed station or site with invalid-station-id or invalid-site-id.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "the opaque nextCursor returned by the previous page; omitted means the first page",
+          "type": "string"
+        },
+        "limit": {
+          "description": "page size, 1..500; omitted or 0 means the default page size",
+          "type": "integer"
+        },
+        "siteId": {
+          "description": "keep only hints of this site; omitted means every site",
+          "type": "string"
+        },
+        "state": {
+          "description": "keep only hints in this state: Active, Consumed, Expired or Superseded",
+          "type": "string"
+        },
+        "stationId": {
+          "description": "keep only hints issued to this station; omitted means every station",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_hints",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "afterTaskId": {
+                "type": "string"
+              },
+              "candidates": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detourM": {
+                      "type": "number"
+                    },
+                    "location": {
+                      "type": "string"
+                    },
+                    "rank": {
+                      "type": "integer"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "taskType": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "rank",
+                    "taskId",
+                    "taskType",
+                    "location",
+                    "detourM"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "consumedAt": {
+                "type": "string"
+              },
+              "consumedTaskId": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "hintId": {
+                "type": "string"
+              },
+              "issuedAt": {
+                "type": "string"
+              },
+              "originLocation": {
+                "type": "string"
+              },
+              "policyVersion": {
+                "type": "integer"
+              },
+              "siteId": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "stationId": {
+                "type": "string"
+              },
+              "supersededAt": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "hintId",
+              "stationId",
+              "siteId",
+              "state",
+              "afterTaskId",
+              "originLocation",
+              "issuedAt",
+              "expiresAt",
+              "policyVersion",
+              "candidates",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    }
+  }
+]

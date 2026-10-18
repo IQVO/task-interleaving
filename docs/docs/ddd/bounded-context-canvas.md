@@ -68,7 +68,7 @@ flowchart LR
     subgraph OUT["Outbound - whom it notifies"]
         direction TB
         out0["fulfillment-execution<br/>(tie-break inside one priority band;<br/>no consumer yet)"]:::none
-        out1["own analytics side<br/>(later phase, no consumer)"]:::self
+        out1["own analytics side<br/>(ti-projector, ADR 0008)"]:::self
     end
     BC ==>|"evt - Kafka<br/>warehouse.task-interleaving.events<br/>InterleavingHintIssued"| out0
     BC ==>|"evt - Kafka<br/>warehouse.task-interleaving.analytics<br/>all four types"| out1
@@ -122,7 +122,7 @@ may use as a tie-break inside one priority band.
 | Message | Kind | Channel | Consumers |
 | --- | --- | --- | --- |
 | `InterleavingHintIssued` | event | `warehouse.task-interleaving.events` and `warehouse.task-interleaving.analytics` | none built: fulfillment-execution does not read it yet |
-| `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` | events | `warehouse.task-interleaving.analytics` only | none built (ADR 0004: a later phase) |
+| `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` | events | `warehouse.task-interleaving.analytics` only | `ti-projector` (ADR 0008) |
 
 Source: `apis/asyncapi.yaml`, ADR 0004.
 

@@ -1,0 +1,248 @@
+// Command ti-projector is the WRITER of the task-interleaving analytics read
+// side (ADR 0008). It consumes the analytics topic
+// (warehouse.task-interleaving.analytics) under a fixed, env-supplied consumer
+// group, projects each event into the ANALYTICAL database (a separate database
+// with its own embedded migrations) and serves only /healthz and /readyz on an
+// admin port. It is the only writer of that database; the read-only reports
+// binary is cmd/ti-reports.
+//
+// It never touches the OLTP database and calls no sibling context. Kafka is
+// dialled lazily (the reader connects inside its first fetch), so a broker
+// outage at boot does not crash the process; the analytical database dial and
+// migrations are retried through internal/bootretry because the first outbound
+// connection of an Istio-injected pod can be reset shortly after start.
+//
+// Environment:
+//
+//	ANALYTICS_DATABASE_URL    analytical Postgres DSN, DIRECT (required)
+//	KAFKA_BROKERS             comma-separated brokers (required)
+//	ANALYTICS_CONSUMER_GROUP  fixed consumer group (default task-interleaving-analytics)
+//	ADMIN_ADDR                /healthz and /readyz listen address (default :8091)
+//	LOG_LEVEL                 debug | info | warn (or warning) | error (default info)
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	inboundkafka "github.com/claudioed/task-interleaving/internal/adapters/inbound/kafka"
+	"github.com/claudioed/task-interleaving/internal/adapters/outbound/analyticsstore"
+	"github.com/claudioed/task-interleaving/internal/bootretry"
+)
+
+const (
+	// shutdownTimeout bounds the admin server drain and the wait for the
+	// consumer loop to commit/dead-letter the message it was handling.
+	shutdownTimeout = 10 * time.Second
+
+	// defaultConsumerGroup is the projector's fixed group when
+	// ANALYTICS_CONSUMER_GROUP is unset (the chart always sets it): the fleet
+	// charter's `<ctx>-analytics` naming, distinct from the fulfillment and
+	// layout consumers' groups.
+	defaultConsumerGroup = "task-interleaving-analytics"
+)
+
+// config is the projector's environment.
+type config struct {
+	analyticsURL string
+	brokers      []string
+	group        string
+	adminAddr    string
+	logLevel     string
+}
+
+var (
+	errMissingAnalyticsURL = errors.New("ANALYTICS_DATABASE_URL is required: the projector writes only to the analytical database")
+	errMissingBrokers      = errors.New("KAFKA_BROKERS is required: the projector consumes the analytics topic")
+)
+
+// loadConfig reads the environment through getenv (os.Getenv in main).
+func loadConfig(getenv func(string) string) (config, error) {
+	or := func(key, fallback string) string {
+		if v := getenv(key); v != "" {
+			return v
+		}
+		return fallback
+	}
+	c := config{
+		analyticsURL: getenv("ANALYTICS_DATABASE_URL"),
+		group:        or("ANALYTICS_CONSUMER_GROUP", defaultConsumerGroup),
+		adminAddr:    or("ADMIN_ADDR", ":8091"),
+		logLevel:     or("LOG_LEVEL", "info"),
+	}
+	if c.analyticsURL == "" {
+		return config{}, errMissingAnalyticsURL
+	}
+	for _, b := range strings.Split(getenv("KAFKA_BROKERS"), ",") {
+		if b = strings.TrimSpace(b); b != "" {
+			c.brokers = append(c.brokers, b)
+		}
+	}
+	if len(c.brokers) == 0 {
+		return config{}, errMissingBrokers
+	}
+	return c, nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("ti-projector exited with error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := loadConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
+	logger := newLogger(cfg.logLevel)
+	slog.SetDefault(logger)
+
+	pool, err := openAnalyticsPool(context.Background(), logger, cfg.analyticsURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close() // runs last: after the consumer loop has stopped touching it
+
+	consumer := inboundkafka.NewAnalyticsConsumer(cfg.brokers, inboundkafka.AnalyticsTopic, cfg.group,
+		analyticsstore.NewProjection(pool), logger)
+	defer func() {
+		if err := consumer.Close(); err != nil {
+			logger.Error("closing the analytics consumer failed", "error", err)
+		}
+	}()
+
+	var notReady atomic.Bool
+	admin := &http.Server{Addr: cfg.adminAddr, Handler: newAdminMux(&notReady), ReadHeaderTimeout: 5 * time.Second}
+	adminErr := make(chan error, 1)
+	go func() {
+		logger.Info("projector admin server listening", "addr", cfg.adminAddr)
+		if err := admin.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			adminErr <- err
+		}
+	}()
+
+	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
+	defer cancelConsumer()
+	consumerDone := make(chan error, 1)
+	go func() {
+		logger.Info("analytics consumer running", "topic", inboundkafka.AnalyticsTopic, "group_id", cfg.group, "brokers", cfg.brokers)
+		consumerDone <- consumer.Run(consumerCtx)
+	}()
+
+	sig, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := awaitStop(sig.Done(), consumerDone, adminErr); err != nil {
+		return err
+	}
+
+	// Graceful shutdown: flip readiness first, drain the admin server, then let
+	// the consumer finish the message in flight (commit or dead-letter) before
+	// the pool closes.
+	notReady.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	shutdownErr := admin.Shutdown(ctx)
+	cancelConsumer()
+	select {
+	case err := <-consumerDone:
+		// Cancellation is the expected end; anything else deserves a line in
+		// the log even though the process is exiting anyway.
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Warn("analytics consumer returned an error at shutdown", "error", err)
+		}
+	case <-ctx.Done():
+		logger.Warn("analytics consumer did not stop before the shutdown deadline")
+	}
+	return shutdownErr
+}
+
+// errConsumerStopped is the error of a consumer loop that returned without an
+// error of its own.
+var errConsumerStopped = errors.New("the consumer loop returned")
+
+// awaitStop blocks until the process must stop. A signal is the graceful path
+// (nil). A consumer loop that exits, on any error or none, and an admin server
+// that fails are errors: the process then exits non-zero so the pod restarts
+// instead of answering /readyz 200 while projecting nothing (INCIDENTS
+// 2026-10-12, the silent projector).
+func awaitStop(sig <-chan struct{}, consumerDone, adminErr <-chan error) error {
+	select {
+	case err := <-consumerDone:
+		if err == nil {
+			err = errConsumerStopped
+		}
+		return fmt.Errorf("analytics consumer stopped unexpectedly: %w", err)
+	case err := <-adminErr:
+		return fmt.Errorf("admin server failed: %w", err)
+	case <-sig:
+		return nil
+	}
+}
+
+// newAdminMux serves /healthz (liveness, never flipped) and /readyz (flips to
+// 503 as the first step of shutdown).
+func newAdminMux(notReady *atomic.Bool) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if notReady.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	})
+	return mux
+}
+
+// openAnalyticsPool applies the embedded analytical migrations over the direct
+// DSN, opens the writer pool and pings it, each under boot retry.
+func openAnalyticsPool(ctx context.Context, logger *slog.Logger, url string) (*pgxpool.Pool, error) {
+	if err := bootretry.Retry(ctx, logger, "run analytics migrations", func() error {
+		return analyticsstore.RunMigrations(url)
+	}); err != nil {
+		return nil, err
+	}
+	pool, err := analyticsstore.NewPool(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	if err := bootretry.Retry(ctx, logger, "ping analytics database", func() error { return pool.Ping(ctx) }); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
+func newLogger(level string) *slog.Logger {
+	var lvl slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn", "warning":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
+}

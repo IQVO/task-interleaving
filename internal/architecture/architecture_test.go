@@ -125,6 +125,50 @@ func TestHexagonalArchitecture(t *testing.T) {
 
 		assertPass(t, result)
 	})
+	t.Run("analytics read model depends on nothing internal except itself", func(t *testing.T) {
+		// internal/analytics/report is the analytics read-model region (ADR
+		// 0008): like the domain, it is a dependency-free core the adapters
+		// depend on. It must not import the OLTP domain/application layers, any
+		// adapter, or cmd.
+		rule := &configuration.DependenciesRule{
+			Package: "**.internal.analytics.**",
+			ShouldOnlyDependsOn: &configuration.Dependencies{
+				Internal: []string{"**.internal.analytics.**"},
+			},
+		}
+
+		result := archgo.CheckArchitecture(moduleInfo, configuration.Config{
+			DependenciesRules: []*configuration.DependenciesRule{rule},
+		})
+
+		assertPass(t, result)
+	})
+
+	for name, layer := range map[string]string{
+		"OLTP domain must not import the analytics store":      "**.internal.domain.**",
+		"OLTP application must not import the analytics store": "**.internal.application.**",
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The analytics pipeline consumes events; it is never called by the
+			// transactional core and never reached back into by it (ADR 0008).
+			rule := &configuration.DependenciesRule{
+				Package: layer,
+				ShouldNotDependsOn: &configuration.Dependencies{
+					Internal: []string{
+						"**.internal.analytics.**",
+						"**.internal.adapters.outbound.analyticsstore.**",
+					},
+				},
+			}
+
+			result := archgo.CheckArchitecture(moduleInfo, configuration.Config{
+				DependenciesRules: []*configuration.DependenciesRule{rule},
+			})
+
+			assertPass(t, result)
+		})
+	}
+
 }
 
 func assertPass(t *testing.T, result *archgo.Result) {

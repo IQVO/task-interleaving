@@ -51,7 +51,7 @@ func decodeJSON(r *http.Request, dest any) error {
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	p := problemFor(err)
 	if p == internalProblem {
-		slog.ErrorContext(r.Context(), "request failed", "error", err, "method", r.Method, "path", r.URL.Path)
+		slog.ErrorContext(r.Context(), "request failed", "error", err, "method", logSafe(r.Method), "path", logSafe(r.URL.Path))
 		writeProblem(w, r, p, "an unexpected error occurred")
 		return
 	}
@@ -83,7 +83,7 @@ func recoverPanic(next http.Handler) http.Handler {
 			if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 				panic(rec)
 			}
-			slog.ErrorContext(r.Context(), "handler panicked", "panic", rec, "method", r.Method, "path", r.URL.Path)
+			slog.ErrorContext(r.Context(), "handler panicked", "panic", rec, "method", logSafe(r.Method), "path", logSafe(r.URL.Path))
 			writeProblem(w, r, internalProblem, "an unexpected error occurred")
 		}()
 		next.ServeHTTP(w, r)

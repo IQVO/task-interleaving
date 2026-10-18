@@ -59,9 +59,12 @@ same interface under its own ADR.
 
 | Binary | Role | Port | Probes |
 | --- | --- | --- | --- |
-| `cmd/api` | The only binary. REST API, hint-expiry worker, outbox relay and the two Kafka consumers run in one process, all always on, on real Postgres and Kafka ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). | `HTTP_ADDR`, default `:8080` | `GET /healthz` (liveness), `GET /readyz` (drain gate, Postgres ping, a Kafka broker answers a metadata request; never topics) |
+| `cmd/api` | REST API, hint-expiry worker, outbox relay and the two Kafka consumers run in one process, all always on, on real Postgres and Kafka ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). | `HTTP_ADDR`, default `:8080` | `GET /healthz` (liveness), `GET /readyz` (drain gate, Postgres ping, a Kafka broker answers a metadata request; never topics) |
+| `cmd/mcp` | Read-only MCP server (Streamable HTTP) over the existing queries; no relay, consumer or Kafka ([ADR 0007](/docs/adr/0007-mcp-server-adoption)). | `MCP_ADDR`, default `:8090` | `GET /healthz` |
+| `cmd/ti-projector` | The only writer of the analytical database; consumes `warehouse.task-interleaving.analytics` and exits non-zero if its consumer stops ([ADR 0008](/docs/adr/0008-analytics-read-side)). | `ADMIN_ADDR`, default `:8091` | `GET /healthz`, `GET /readyz` |
+| `cmd/ti-reports` | Read-only reports over the analytical database: `/reports/hint-adoption`, `/reports/freshness`. | `HTTP_ADDR`, default `:8092` | `GET /healthz` |
 
-There is no `cmd/mcp`: this context has no MCP server. How the process boots,
+`web/` is not a Go binary: the `task_interleaving_mfe` Module Federation remote, served by its own nginx image. How `cmd/api` boots,
 what it starts and in which order it stops is in the
 [Runbook](/docs/operations/runbook); every variable is in
 [Configuration](/docs/operations/configuration).
@@ -174,5 +177,6 @@ The tests run on every PR (`arch-test` job, `make arch-test`):
 | `TestEventCatalogueMatchesContract` | Every full CloudEvents type that `apis/asyncapi.yaml` declares for this service appears in the CloudEvents ADR (`docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`). |
 | `TestKafkaIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationTestsUseTestcontainers` | `*_integration_test.go` files boot their own broker or database; no `KAFKA_BROKERS` / `DATABASE_URL` gate, no `localhost:9092`. |
 
-`TestMCPOptionalToolInputsCarryOmitempty` skips (there is no MCP adapter); every
-other sensor runs. Details and commands are on [Testing](/docs/development/testing).
+`TestMCPServerIsReadOnly` pins the MCP adapter to the read use cases and
+`TestMCPOptionalToolInputsCarryOmitempty` now scans the real MCP tool inputs; no
+sensor skips. Details and commands are on [Testing](/docs/development/testing).

@@ -22,7 +22,7 @@ for real responses.
 | --- | --- | --- |
 | REST | `apis/openapi.yaml` (OpenAPI 3.0.3, version 1.0.0) | The pages under *REST* are generated from the spec with `npm run gen-api-docs`; do not edit them by hand. Servers named in the spec: `http://localhost:8080` (local) and `http://localhost:8000/api/task-interleaving` (kind cluster through Kong). |
 | Events | `apis/asyncapi.yaml` (AsyncAPI 2.6.0, version 1.0.0) | Summarised on the [event catalogue](/docs/api-reference/events); every field on [Domain events](/docs/ddd/domain-events). |
-| MCP | none | There is no `cmd/mcp` and the spec names no MCP tool. |
+| MCP | [ADR 0007](/docs/adr/0007-mcp-server-adoption), `internal/adapters/inbound/mcp` | `cmd/mcp` serves Streamable HTTP on `/mcp` (port 8090; through Kong `/api/mcp/task-interleaving`). Four read-only tools, no write tool: `get_site_policy`, `list_hints` (`stationId`, `state`, `siteId`), `get_hint`, `get_station` (position and active hint). No auth, by fleet decision. |
 
 ## Endpoints
 
@@ -34,6 +34,7 @@ for real responses.
 | Hints | `GET /hints/{hintId}` | `getHint` | `200`, the hint with its candidates and outcome |
 | Stations | `GET /stations/{stationId}` | `getStation` | `200`, position, last completed task, Active hint; `404 station-not-found` |
 | Recommendations | `POST /recommendations` | `recommendTasks` | `200`, ranked candidates, possibly empty; read-only simulation |
+| Reports | `GET /reports/hint-adoption`, `GET /reports/freshness` | `getHintAdoption`, `getReportsFreshness` | `200`, served by `cmd/ti-reports` (port 8092, in-cluster only) from the analytical database; see [ADR 0008](/docs/adr/0008-analytics-read-side) |
 | Health | `GET /healthz`, `GET /readyz` | `healthz`, `readyz` | `200` / `200`, or `503` once shutdown has started (the spec also says "while starting"; the listener only opens after boot, see [Runbook](/docs/operations/runbook#probes)) |
 
 ## Conventions in the contract

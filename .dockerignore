@@ -22,6 +22,9 @@ charts/
 scripts/
 templates/
 
+# The frontend remote has its own image (web/Dockerfile)
+web/
+
 # Tool configs irrelevant to `go build`
 .golangci.yml
 .gremlins.yaml
