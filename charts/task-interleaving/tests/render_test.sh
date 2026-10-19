@@ -170,4 +170,89 @@ expect_refusal "a grace period just under the worst case" "terminationGracePerio
 expect_refusal "FULFILLMENT_MODE through extraEnv" "*_MODE" "${base[@]}" --set 'extraEnv[0].name=FULFILLMENT_MODE' --set 'extraEnv[0].value=permissive'
 expect_refusal "LAYOUT_MODE through extraEnv" "ADR 0006" "${base[@]}" --set 'extraEnv[0].name=LAYOUT_MODE' --set 'extraEnv[0].value=kafka'
 
+# --- optional components (ADR 0007 mcp, ADR 0008 analytics, web remote) ---------
+# Every optional component is OFF by default: a default render is the api alone.
+default_render="$(render "${base[@]}")"
+for c in mcp analytics-projector analytics-reports frontend; do
+  if grep -q "app.kubernetes.io/component: $c\$" <<<"$default_render"; then
+    fail "the $c component must not render while its enabled flag is false"
+  fi
+done
+
+# binary_env_of <main.go...>: the env literals one binary reads.
+binary_env_of() {
+  local f
+  for f in "$@"; do
+    grep -hoE '[Gg]etenv\("[A-Z][A-Z0-9_]*"' "$f" || true
+  done | sed -E 's/.*"([A-Z0-9_]+)".*/\1/' | sort -u
+}
+# assert_env_rendered <rendered> <label> <vars...>
+assert_env_rendered() {
+  local rendered="$1" label="$2"; shift 2
+  local var
+  for var in "$@"; do
+    grep -q "name: $var\$" <<<"$rendered" || fail "$label does not render $var, which its binary reads"
+  done
+}
+
+# mcp: its own env, never the api ConfigMap, never Kafka (ADR 0007).
+mcp_dep="$(render_only mcp-deployment.yaml "${base[@]}" --set mcp.enabled=true)"
+grep -q 'app.kubernetes.io/component: mcp' <<<"$mcp_dep" || fail "the mcp Deployment was not rendered with mcp.enabled=true"
+grep -q 'command: \["/app/mcp"\]' <<<"$mcp_dep" || fail "the mcp Deployment must run /app/mcp"
+if grep -q 'configMapRef:' <<<"$mcp_dep"; then fail "mcp-deployment.yaml must not mount the api ConfigMap"; fi
+if grep -Eq 'name: (KAFKA_BROKERS|OUTBOX_[A-Z_]+|[A-Z]+_CONSUMER_GROUP)$' <<<"$mcp_dep"; then
+  fail "the mcp Deployment must not get Kafka/relay/consumer env (read-only, never dials Kafka)"
+fi
+# shellcheck disable=SC2207
+mcp_vars=($(binary_env_of "$repo_dir/cmd/mcp/main.go"))
+(( ${#mcp_vars[@]} >= 3 )) || fail "found only ${#mcp_vars[@]} env literals in cmd/mcp/main.go; the scan is looking in the wrong place"
+assert_env_rendered "$mcp_dep" "the mcp Deployment" "${mcp_vars[@]}" DATABASE_URL MIGRATIONS_DATABASE_URL
+
+# analytics: the projector (writer) and reports (reader) over the analytical DB.
+analytics=(--set analytics.enabled=true --set analytics.url=postgres://u@example.invalid:5432/analytics)
+projector_dep="$(render_only projector-deployment.yaml "${base[@]}" "${analytics[@]}")"
+reports_all="$(render_only reports-deployment.yaml "${base[@]}" "${analytics[@]}")"
+grep -q 'command: \["/app/ti-projector"\]' <<<"$projector_dep" || fail "the projector Deployment must run /app/ti-projector"
+grep -q 'command: \["/app/ti-reports"\]' <<<"$reports_all" || fail "the reports Deployment must run /app/ti-reports"
+grep -q 'kind: Service' <<<"$reports_all" || fail "the reports Service was not rendered with analytics.enabled=true"
+if grep -q 'kind: Service' <<<"$projector_dep"; then fail "the projector must not render a Service"; fi
+# shellcheck disable=SC2207
+projector_vars=($(binary_env_of "$repo_dir"/cmd/ti-projector/main.go))
+# shellcheck disable=SC2207
+reports_vars=($(binary_env_of "$repo_dir"/cmd/ti-reports/main.go))
+assert_env_rendered "$projector_dep" "the projector Deployment" "${projector_vars[@]}" ANALYTICS_DATABASE_URL KAFKA_BROKERS ANALYTICS_CONSUMER_GROUP ADMIN_ADDR
+assert_env_rendered "$reports_all" "the reports Deployment" "${reports_vars[@]}" ANALYTICS_DATABASE_URL HTTP_ADDR
+[[ "$(env_value "$projector_dep" ANALYTICS_CONSUMER_GROUP)" == "task-interleaving-analytics" ]] || fail "ANALYTICS_CONSUMER_GROUP must be the stable task-interleaving-analytics"
+for rendered in "$projector_dep" "$reports_all"; do
+  if grep -Eq 'name: (DATABASE_URL|MIGRATIONS_DATABASE_URL)$' <<<"$rendered"; then
+    fail "an analytics Deployment must never open the OLTP database"
+  fi
+done
+if grep -q 'name: KAFKA_BROKERS$' <<<"$reports_all"; then fail "the reports Deployment must never dial Kafka"; fi
+# The analytical DSN lives in a Secret, never a ConfigMap, and an existingSecret suppresses the chart's own.
+analytics_secret="$(render_only analytics-secret.yaml "${base[@]}" "${analytics[@]}")"
+grep -q 'ANALYTICS_DATABASE_URL: "postgres://u@example.invalid:5432/analytics"' <<<"$analytics_secret" || fail "analytics.url does not land in the analytics Secret"
+if render "${base[@]}" --set analytics.enabled=true --set analytics.existingSecret=an-db | grep -q 'ANALYTICS_DATABASE_URL: "'; then
+  fail "an analytics.existingSecret must suppress the chart's analytics Secret"
+fi
+expect_refusal "analytics without a DSN source" "neither analytics.url nor analytics.existingSecret" "${base[@]}" --set analytics.enabled=true
+expect_refusal "analytics without a consumer group" "analytics.consumerGroup" "${base[@]}" "${analytics[@]}" --set analytics.consumerGroup=
+
+# The web remote: its own nginx Deployment + ClusterIP Service, no DB/Kafka env,
+# and no route in this chart (the Nginx web gateway owns /mfes/task-interleaving/).
+frontend_dep="$(render_only frontend-deployment.yaml "${base[@]}" --set frontend.enabled=true)"
+frontend_svc="$(render_only frontend-service.yaml "${base[@]}" --set frontend.enabled=true)"
+grep -q 'app.kubernetes.io/component: frontend' <<<"$frontend_dep" || fail "the frontend Deployment was not rendered with frontend.enabled=true"
+grep -q 'type: ClusterIP' <<<"$frontend_svc" || fail "the frontend Service must stay ClusterIP"
+if grep -Eq 'name: (DATABASE_URL|KAFKA_BROKERS)$' <<<"$frontend_dep"; then fail "the frontend Deployment must not get database/Kafka env"; fi
+
+# ALL optional components render TOGETHER (ct lint's values file).
+together="$(render "${everything[@]}")"
+for component in api mcp analytics-projector analytics-reports frontend; do
+  grep -q "app.kubernetes.io/component: $component\$" <<<"$together" || fail "the full render lacks the $component component"
+done
+if grep -E 'kind: (Ingress|HTTPRoute)' <<<"$together" | grep -q frontend; then
+  fail "frontend routing must not live in this chart"
+fi
+
 echo "PASS: task-interleaving chart render assertions"

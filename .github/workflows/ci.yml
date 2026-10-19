@@ -48,6 +48,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: python3 scripts/harness/guide_lint.py
       - run: python3 scripts/harness/test_hook.py
+      - run: python3 scripts/harness/test_red_issue.py
 
   # Complexity gate as its own named check: cyclomatic (gocyclo, cyclop),
   # cognitive (gocognit), nesting (nestif) and function size (funlen).
@@ -102,7 +103,7 @@ jobs:
       - name: Unit tests with coverage + gate (make coverage)
         run: make coverage
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: coverage
@@ -211,7 +212,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "20"
       - name: Dead code (go tool deadcode, -test so test-only helpers don't false-positive)
@@ -255,7 +256,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "20"
       - name: Install Spectral
@@ -347,6 +348,38 @@ jobs:
           go-version-file: go.mod
       - name: Architecture fitness tests
         run: go test ./internal/architecture/... -v
+
+  # task-interleaving-mfe (web/) is a Module Federation remote consumed by the
+  # warehouse-console shell; it depends on @warehouse/ui-kit via
+  # `file:../../warehouse-ui-kit`, so warehouse-ui-kit is checked out as a
+  # SIBLING directory here (matching warehouse-console's own CI shape) so that
+  # relative path resolves the same way it does on a contributor's machine.
+  # lint + typecheck (tsc -b) + vitest unit/component tests + production build.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: task-interleaving/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: task-interleaving
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: IQVO/warehouse-ui-kit
+          ref: develop
+          path: warehouse-ui-kit
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - run: npm ci && npm run build
+        working-directory: warehouse-ui-kit
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc -b
+      - run: npm test
+      - run: npm run build
 
   # ============================================================
   # CLASSIFICATION: PUBLISH (Docker image) -- push-to-main only

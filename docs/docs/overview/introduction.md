@@ -30,9 +30,16 @@ the relay are always on, and `DATABASE_URL`, `KAFKA_BROKERS` and both consumer
 group ids are mandatory
 ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
 
-Packaged: a `Dockerfile` and the Helm chart `charts/task-interleaving`. Not built:
-an MCP server (`cmd/mcp`), any OpenTelemetry metric or trace, a `warehouse-infra`
-entry and a consumer of the hint in fulfillment-execution.
+Also built: a read-only MCP server (`cmd/mcp`, [ADR 0007](/docs/adr/0007-mcp-server-adoption)),
+the analytics read side (`cmd/ti-projector` and `cmd/ti-reports` over a separate
+analytical database, [ADR 0008](/docs/adr/0008-analytics-read-side)) and the
+`task_interleaving_mfe` web remote (`web/`).
+
+Packaged: a `Dockerfile` that builds every `cmd/*`, a web image and the Helm chart
+`charts/task-interleaving` (optional mcp, analytics and frontend components, off
+by default). Not built: any OpenTelemetry metric or trace, a `warehouse-infra`
+entry, the shell's entry for the remote in `warehouse-console` and a consumer of
+the hint in fulfillment-execution.
 The [Runbook](/docs/operations/runbook#deployment) and
 [Integration](/docs/ecosystem/integration) pages say exactly where each edge stands.
 :::

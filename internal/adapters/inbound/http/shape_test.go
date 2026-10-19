@@ -51,6 +51,9 @@ func (d specDoc) conforms(name string, value any) []string {
 
 func (d specDoc) check(s map[string]any, value any, path string) []string {
 	s = d.resolve(s)
+	if nullable, _ := s["nullable"].(bool); nullable && value == nil {
+		return nil
+	}
 	if enum, ok := s["enum"].([]any); ok {
 		return checkEnum(enum, value, path)
 	}

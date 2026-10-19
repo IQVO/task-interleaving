@@ -110,7 +110,7 @@ announcement of PICK, PACK, SLAM and REBIN tasks.
 | Consumer | Protocol | Topic | Contract | Status |
 | --- | --- | --- | --- | --- |
 | fulfillment-execution (intended) | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.events` | `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | **Published, not consumed.** This service writes it (outbox + relay, key = station id). fulfillment-execution's `origin/develop` has no code that reads the topic or the type; its ADR 0049 and ADR 0050 list "consuming `InterleavingHintIssued`" as out of scope. Nothing on the floor changes until that consumer exists. |
-| analytics read side | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.analytics` | `InterleavingHintIssued`, `InterleavingHintConsumed`, `InterleavingHintExpired` (key = station id), `InterleavingPolicyDeclared` (key = site id) | **Published, no consumer** anywhere; none is planned beyond ADR 0004's "a later phase". |
+| analytics read side | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.analytics` | `InterleavingHintIssued`, `InterleavingHintConsumed`, `InterleavingHintExpired` (key = station id), `InterleavingPolicyDeclared` (key = site id) | **Built.** Consumed only by this service's own `cmd/ti-projector` (group `ANALYTICS_CONSUMER_GROUP`, default `task-interleaving-analytics`, deterministic poison to `warehouse.task-interleaving.analytics.dlq`), which feeds the analytical database that `cmd/ti-reports` serves (`GET /reports/hint-adoption`, `GET /reports/freshness`); ADR 0008. No other context consumes it. |
 | operators, warehouse-console, warehouse-ops-agent | REST (Open Host Service) | `apis/openapi.yaml` | policy, hints, stations, recommendations | **Built** (the API), no known client. Not in `warehouse-infra`'s Kong routes. |
 
 Publication is through the transactional outbox: the aggregate row and its
@@ -148,7 +148,10 @@ in the cluster until `warehouse-infra` installs the chart.
   only as `TaskAvailable` occurrences, like any other announced task type (announced
   since fulfillment-execution's ADR 0050).
 - **No per-worker data.** Hints are per station; the associate is not an input.
-- No `cmd/mcp` and no MCP tool: nothing in the contracts names one.
+- The MCP server (`cmd/mcp`, ADR 0007) is inbound and read-only: it calls no
+  sibling and exposes no write tool.
+- The web remote calls only this context's own `/api/task-interleaving`: no
+  sibling context and not the reports service.
 
 ## Failure behaviour
 

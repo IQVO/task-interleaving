@@ -84,6 +84,28 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Reports",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/reports",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/get-hint-adoption",
+          label: "How much of the issued advice operators take, per day",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-reports-freshness",
+          label: "How far the analytics projection is behind",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Health",
       link: {
         type: "doc",

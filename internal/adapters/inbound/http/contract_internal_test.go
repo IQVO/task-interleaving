@@ -46,9 +46,22 @@ func specOperations(t *testing.T) []string {
 
 func routerOperations(t *testing.T) []string {
 	t.Helper()
-	routes, ok := NewRouter(&Server{}).(chi.Routes)
+	ops := walkOperations(t, NewRouter(&Server{}))
+	// /healthz is served by both binaries; the reports router adds its two.
+	for _, op := range walkOperations(t, NewReportsRouter(&ReportsServer{})) {
+		if !slices.Contains(ops, op) {
+			ops = append(ops, op)
+		}
+	}
+	sort.Strings(ops)
+	return ops
+}
+
+func walkOperations(t *testing.T, h http.Handler) []string {
+	t.Helper()
+	routes, ok := h.(chi.Routes)
 	if !ok {
-		t.Fatal("NewRouter does not return a chi router")
+		t.Fatal("the router is not a chi router")
 	}
 	var ops []string
 	err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
@@ -62,13 +75,16 @@ func routerOperations(t *testing.T) []string {
 	return ops
 }
 
-// documentedOperations are the 8 operations of apis/openapi.yaml; the test
-// pins them so neither the contract nor the router can drift unnoticed.
+// documentedOperations are the 10 operations of apis/openapi.yaml; the test
+// pins them so neither the contract nor the routers can drift unnoticed. The
+// last two are served by the separate ti-reports binary (NewReportsRouter).
 var documentedOperations = []string{
 	"GET /healthz",
 	"GET /hints",
 	"GET /hints/{hintId}",
 	"GET /readyz",
+	"GET /reports/freshness",
+	"GET /reports/hint-adoption",
 	"GET /sites/{siteId}/policy",
 	"GET /stations/{stationId}",
 	"POST /recommendations",
@@ -114,6 +130,8 @@ func TestProblemSlugsMatchTheContract(t *testing.T) {
 	produced := map[string]bool{
 		internalProblem.slug: true, idempotencyKeyRequired.slug: true, idempotencyKeyReused.slug: true,
 		dependencyUnavailable.slug: true,
+		// answered by the separate ti-reports binary
+		invalidReportRange.slug: true, invalidReportGranularity.slug: true, reportStoreError.slug: true,
 	}
 	for _, entry := range problemCatalogue {
 		produced[entry.p.slug] = true
