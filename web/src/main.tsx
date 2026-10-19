@@ -5,7 +5,7 @@ import "@warehouse/ui-kit/tokens.css";
 import App from "./App";
 
 /** Standalone dev entry -- lets task-interleaving-mfe run and be worked on in
- *  isolation (npm run dev, :5195) without the shell attached. The shell
+ *  isolation (npm run dev, :5197) without the shell attached. The shell
  *  imports App.tsx directly via Module Federation and provides its own
  *  BrowserRouter + AppShell chrome; this file is dev-only scaffolding. */
 createRoot(document.getElementById("root")!).render(
