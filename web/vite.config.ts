@@ -5,15 +5,15 @@ import { federation } from "@module-federation/vite";
 // task-interleaving-mfe: the task-interleaving remote. Exposes ./App -- the
 // warehouse-console shell lazy-loads it as `task_interleaving_mfe/App` and
 // mounts it under its own `/task-interleaving/*` splat route. Also runnable
-// standalone on :5195 for local development without the shell (see main.tsx).
+// standalone on :5197 for local development without the shell (see main.tsx).
 //
 // PINNED host/remote contract (warehouse-console vite.config.ts will carry the
 // matching entry; change both together or not at all):
 //   federation container  task_interleaving_mfe
 //   exposed module        ./App (default export, no props)
 //   production base       /mfes/task-interleaving/   (Nginx web gateway path)
-//   dev/preview port      5195 (next free after slotting-optimization's 5194
-//                          on the fleet's 5181+ ladder)
+//   dev/preview port      5197 (unique on the fleet's 5181+ ladder: slotting-optimization
+//                          holds 5194, pick-face-replenishment 5196; 5195 was a duplicate)
 //
 // `base` is the deployment-time asset namespace. In the kind cluster this
 // remote is served by its own nginx pod behind the Nginx web gateway at
@@ -55,13 +55,13 @@ export default defineConfig({
     }),
   ],
   server: {
-    port: 5195,
+    port: 5197,
     strictPort: true,
     cors: true,
-    origin: "http://localhost:5195",
+    origin: "http://localhost:5197",
   },
   preview: {
-    port: 5195,
+    port: 5197,
     strictPort: true,
     cors: true,
   },

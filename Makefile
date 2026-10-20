@@ -170,6 +170,7 @@ guide-lint: ## lint agent guides: skills load, references resolve, context budge
 
 harness-test: ## unit-test the agent hooks (pre/post/stop)
 	python3 scripts/harness/test_hook.py
+	python3 scripts/harness/test_red_issue.py
 
 # --- local run on the real infrastructure (ADR 0006) --------------------------
 # There is no in-memory mode: the service needs Postgres and Kafka. These
