@@ -1,6 +1,6 @@
 module github.com/claudioed/task-interleaving
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/arch-go/arch-go v1.7.0
