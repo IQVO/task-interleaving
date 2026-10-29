@@ -127,7 +127,7 @@ shortened (`text COLLATE "C"` is shown as `text`).
 
 ## Analytical database
 
-The hint-adoption read model ([ADR 0008](/docs/adr/0008-analytics-read-model-and-reports))
+The hint-adoption read model ([ADR 0008](/docs/adr/0008-analytics-read-side.md))
 is a separate database (`task_interleaving_analytics`), written only by
 `cmd/ti-projector` from `warehouse.task-interleaving.analytics` and read by
 `cmd/ti-reports`. Facts, not aggregates: it can be dropped and rebuilt by
