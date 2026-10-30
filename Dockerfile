@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY . .
 
-# Build EVERY cmd/* binary (today api, mcp, ti-projector and ti-reports) by
+# Build EVERY cmd/* binary (today api, mcp, a2a, ti-projector and ti-reports) by
 # looping over the cmd/ directories, so a new composition root can never be
 # merged with a Dockerfile that silently forgets to build it (the first
 # symptom would otherwise be a CrashLoopBackOff on
@@ -36,7 +36,7 @@ RUN apk upgrade --no-cache && \
     apk add --no-cache ca-certificates tzdata && \
     addgroup -g 1000 -S app && adduser -u 1000 -S app -G app
 WORKDIR /app
-# Every binary built above (api, mcp, ti-projector, ti-reports) -> /app/<name>.
+# Every binary built above (api, mcp, a2a, ti-projector, ti-reports) -> /app/<name>.
 # The golang-migrate files are embedded in the binaries (internal/adapters/
 # outbound/postgres for the OLTP schema, analytics/ for the analytical one), so
 # no migrations directory is copied. The service writes nothing to disk, so the
@@ -44,6 +44,6 @@ WORKDIR /app
 # workload with `command:`; the web remote has its own image (web/Dockerfile).
 COPY --from=build --chown=app:app /out/ ./
 USER 1000
-# 8080 api, 8090 mcp, 8091 ti-projector admin, 8092 ti-reports.
-EXPOSE 8080 8090 8091 8092
+# 8080 api, 8090 mcp, 8091 ti-projector admin, 8092 ti-reports, 8093 a2a.
+EXPOSE 8080 8090 8091 8092 8093
 ENTRYPOINT ["./api"]

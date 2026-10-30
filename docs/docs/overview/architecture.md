@@ -61,6 +61,7 @@ same interface under its own ADR.
 | --- | --- | --- | --- |
 | `cmd/api` | REST API, hint-expiry worker, outbox relay and the two Kafka consumers run in one process, all always on, on real Postgres and Kafka ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). | `HTTP_ADDR`, default `:8080` | `GET /healthz` (liveness), `GET /readyz` (drain gate, Postgres ping, a Kafka broker answers a metadata request; never topics) |
 | `cmd/mcp` | Read-only MCP server (Streamable HTTP) over the existing queries; no relay, consumer or Kafka ([ADR 0007](/docs/adr/0007-mcp-server-adoption)). | `MCP_ADDR`, default `:8090` | `GET /healthz` |
+| `cmd/a2a` | Read-only A2A (Agent2Agent) server over the same read use cases: JSON-RPC at `/` and `/a2a`, Agent Card at `/.well-known/agent-card.json`; no relay, consumer or Kafka ([ADR 0009](/docs/adr/0009-a2a-inbound-adapter)). | `A2A_ADDR`, default `:8093` | `GET /healthz` |
 | `cmd/ti-projector` | The only writer of the analytical database; consumes `warehouse.task-interleaving.analytics` and exits non-zero if its consumer stops ([ADR 0008](/docs/adr/0008-analytics-read-side)). | `ADMIN_ADDR`, default `:8091` | `GET /healthz`, `GET /readyz` |
 | `cmd/ti-reports` | Read-only reports over the analytical database: `/reports/hint-adoption`, `/reports/freshness`. | `HTTP_ADDR`, default `:8092` | `GET /healthz` |
 
@@ -165,6 +166,7 @@ The tests run on every PR (`arch-test` job, `make arch-test`):
 | --- | --- |
 | `TestHexagonalArchitecture` (6 subtests) | `**.internal.domain.**` depends only on domain; `**.internal.application.**` only on domain and application; inbound adapters do not depend on outbound adapters and vice versa; nothing under `internal/` imports `cmd`; `internal/application/ports` holds only interfaces. |
 | `TestMCPAdapterDependencyRule` | An MCP adapter, if added, depends only on application and domain, and nothing depends on it. |
+| `TestA2AAdapterDependencyRule`, `TestA2AServerIsReadOnly`, `TestNoOutboundA2AClient` | The A2A adapter depends only on application and domain, nothing depends on it, it and `cmd/a2a` reach only read use cases (no ports, outbox, event sink, Kafka or write use case), and no file imports the A2A client: this context is delegated to and never delegates. |
 | `TestNoAuthMiddlewareReintroduced` | No `"Bearer "`, `golang-jwt/jwt`, `dgrijalva/jwt-go` or `lestrrat-go/jwx` in non-comment source under `internal/adapters/inbound`: REST is unauthenticated fleet-wide. |
 | `TestKafkaConsumerGroupNeverHardcodedInline` | No `GroupID: "literal"`; the group id comes from `FULFILLMENT_CONSUMER_GROUP` / `LAYOUT_CONSUMER_GROUP`. |
 | `TestRuntimeBinaryHasNoInMemoryAdapters`, `TestRuntimeBinarySensorBites` | No non-test file under `cmd/**` imports `internal/adapters/outbound/memory`: the binary runs on Postgres and Kafka only (ADR 0006). The second test proves the detector flags plain, aliased, blank, dot and nested imports. |

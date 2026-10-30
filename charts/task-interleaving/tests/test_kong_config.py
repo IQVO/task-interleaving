@@ -19,11 +19,14 @@ This test is the sensor for that decision. It fails if:
     the POST commands send or the If-Match header the policy PUT sends,
   * the MCP route (when enabled) does not match /api/mcp/task-interleaving,
     does not rewrite to /mcp, or lacks the plugin annotation,
+  * the A2A route (when enabled) does not match /api/a2a/task-interleaving,
+    does not rewrite to / (so the Agent Card at /.well-known/agent-card.json
+    stays reachable under the prefix), or lacks the plugin annotation,
   * defaults (no --set flags beyond the mandatory runtime values) render any
     Kong object at all — standalone installs without Kong must be unaffected.
 
-The API route and the optional MCP route (/api/mcp/task-interleaving -> /mcp)
-are the only Kong routes: reports and the web remote are never routed here.
+The API route and the optional MCP (/api/mcp/task-interleaving -> /mcp) and A2A
+(/api/a2a/task-interleaving -> /) routes are the only Kong routes: reports and the web remote are never routed here.
 
 Run: python3 charts/task-interleaving/tests/test_kong_config.py
 """
@@ -61,10 +64,21 @@ ENABLE_KONG = MANDATORY + [
     "--set", "mcp.route.enabled=true",
     "--set", "mcp.route.parentRefs[0].name=warehouse-gateway",
     "--set", "mcp.route.parentRefs[0].namespace=kong",
+    "--set", "a2a.enabled=true",
+    "--set", "a2a.route.enabled=true",
+    "--set", "a2a.route.parentRefs[0].name=warehouse-gateway",
+    "--set", "a2a.route.parentRefs[0].namespace=kong",
 ]
 
 API_PREFIX, API_TARGET = "/api/task-interleaving", "/"
 MCP_PREFIX, MCP_TARGET = "/api/mcp/task-interleaving", "/mcp"
+A2A_PREFIX, A2A_TARGET = "/api/a2a/task-interleaving", "/"
+
+# route name suffix -> (expected match prefix, expected rewrite target)
+ROUTE_CONTRACT = {
+    "-mcp": (MCP_PREFIX, MCP_TARGET),
+    "-a2a": (A2A_PREFIX, A2A_TARGET),
+}
 
 
 def render(extra_args: list[str]) -> list[dict]:
@@ -94,11 +108,11 @@ def check_routes(routes: list[dict], plugins: dict[str, dict], failures: list[st
             for plugin in ann.split(","):
                 if plugin not in plugins:
                     failures.append(f"HTTPRoute {name} references plugin '{plugin}' that the chart does not render")
-        is_mcp = name.endswith("-mcp")
+        prefix, target = next((c for suffix, c in ROUTE_CONTRACT.items() if name.endswith(suffix)), (API_PREFIX, API_TARGET))
         for rule in r.get("spec", {}).get("rules", []):
-            check_rule(name, rule, MCP_PREFIX if is_mcp else API_PREFIX, MCP_TARGET if is_mcp else API_TARGET, failures)
-    if sorted(r["metadata"]["name"] for r in routes) != [RELEASE, f"{RELEASE}-mcp"]:
-        failures.append("expected exactly the api and the mcp HTTPRoute")
+            check_rule(name, rule, prefix, target, failures)
+    if sorted(r["metadata"]["name"] for r in routes) != [RELEASE, f"{RELEASE}-a2a", f"{RELEASE}-mcp"]:
+        failures.append("expected exactly the api, the a2a and the mcp HTTPRoute")
 
 
 def check_rule(name: str, rule: dict, want_prefix: str, want_target: str, failures: list[str]) -> None:
@@ -161,7 +175,7 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print(f"PASS: {len(routes)} HTTPRoutes (api, mcp) annotated and stripping their prefix, {len(plugins)} KongPlugins, "
+    print(f"PASS: {len(routes)} HTTPRoutes (api, mcp, a2a) annotated and stripping their prefix, {len(plugins)} KongPlugins, "
           "no auth plugin, defaults are a no-op")
     return 0
 

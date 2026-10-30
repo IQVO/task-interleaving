@@ -31,12 +31,13 @@ group ids are mandatory
 ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)).
 
 Also built: a read-only MCP server (`cmd/mcp`, [ADR 0007](/docs/adr/0007-mcp-server-adoption)),
+a read-only A2A server (`cmd/a2a`, [ADR 0009](/docs/adr/0009-a2a-inbound-adapter)),
 the analytics read side (`cmd/ti-projector` and `cmd/ti-reports` over a separate
 analytical database, [ADR 0008](/docs/adr/0008-analytics-read-side)) and the
 `task_interleaving_mfe` web remote (`web/`).
 
 Packaged: a `Dockerfile` that builds every `cmd/*`, a web image and the Helm chart
-`charts/task-interleaving` (optional mcp, analytics and frontend components, off
+`charts/task-interleaving` (optional mcp, a2a, analytics and frontend components, off
 by default). Not built: any OpenTelemetry metric or trace, a `warehouse-infra`
 entry, the shell's entry for the remote in `warehouse-console` and a consumer of
 the hint in fulfillment-execution.
