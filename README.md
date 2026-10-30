@@ -1,5 +1,7 @@
 # task-interleaving
 
+[![CI](https://github.com/IQVO/task-interleaving/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/IQVO/task-interleaving/actions/workflows/ci.yml?query=branch%3Adevelop) [![coverage gate](https://img.shields.io/badge/coverage%20gate-90%25-brightgreen)](https://github.com/IQVO/task-interleaving/blob/develop/Makefile) [![Go](https://img.shields.io/badge/go-1.27.3-00ADD8?logo=go&logoColor=white)](https://github.com/IQVO/task-interleaving/blob/develop/go.mod) [![release](https://img.shields.io/github/v/release/IQVO/task-interleaving?sort=semver)](https://github.com/IQVO/task-interleaving/releases) [![docs](https://img.shields.io/badge/docs-iqvo.github.io-blue)](https://iqvo.github.io/task-interleaving/) [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/IQVO/task-interleaving/blob/develop/LICENSE)
+
 Task Interleaving: a WES-tier **Supporting** bounded context of the
 warehouse-systems fleet. When a station completes a task it ranks the site's
 open tasks by travel distance and issues an **advisory hint**, so operators
