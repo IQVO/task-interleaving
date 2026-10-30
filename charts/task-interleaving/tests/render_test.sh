@@ -170,10 +170,10 @@ expect_refusal "a grace period just under the worst case" "terminationGracePerio
 expect_refusal "FULFILLMENT_MODE through extraEnv" "*_MODE" "${base[@]}" --set 'extraEnv[0].name=FULFILLMENT_MODE' --set 'extraEnv[0].value=permissive'
 expect_refusal "LAYOUT_MODE through extraEnv" "ADR 0006" "${base[@]}" --set 'extraEnv[0].name=LAYOUT_MODE' --set 'extraEnv[0].value=kafka'
 
-# --- optional components (ADR 0007 mcp, ADR 0008 analytics, web remote) ---------
+# --- optional components (ADR 0007 mcp, ADR 0009 a2a, ADR 0008 analytics, web remote) ---
 # Every optional component is OFF by default: a default render is the api alone.
 default_render="$(render "${base[@]}")"
-for c in mcp analytics-projector analytics-reports frontend; do
+for c in mcp a2a analytics-projector analytics-reports frontend; do
   if grep -q "app.kubernetes.io/component: $c\$" <<<"$default_render"; then
     fail "the $c component must not render while its enabled flag is false"
   fi
@@ -207,6 +207,32 @@ fi
 mcp_vars=($(binary_env_of "$repo_dir/cmd/mcp/main.go"))
 (( ${#mcp_vars[@]} >= 3 )) || fail "found only ${#mcp_vars[@]} env literals in cmd/mcp/main.go; the scan is looking in the wrong place"
 assert_env_rendered "$mcp_dep" "the mcp Deployment" "${mcp_vars[@]}" DATABASE_URL MIGRATIONS_DATABASE_URL
+
+# a2a: its own env, never the api ConfigMap, never Kafka (ADR 0009, read-only).
+a2a_dep="$(render_only a2a-deployment.yaml "${base[@]}" --set a2a.enabled=true --namespace warehouse-systems)"
+grep -q 'app.kubernetes.io/component: a2a' <<<"$a2a_dep" || fail "the a2a Deployment was not rendered with a2a.enabled=true"
+grep -q 'command: \["/app/a2a"\]' <<<"$a2a_dep" || fail "the a2a Deployment must run /app/a2a"
+if grep -q 'configMapRef:' <<<"$a2a_dep"; then fail "a2a-deployment.yaml must not mount the api ConfigMap"; fi
+if grep -Eq 'name: (KAFKA_BROKERS|OUTBOX_[A-Z_]+|[A-Z]+_CONSUMER_GROUP)$' <<<"$a2a_dep"; then
+  fail "the a2a Deployment must not get Kafka/relay/consumer env (read-only, never dials Kafka)"
+fi
+# shellcheck disable=SC2207
+a2a_vars=($(binary_env_of "$repo_dir"/cmd/a2a/main.go))
+(( ${#a2a_vars[@]} >= 4 )) || fail "found only ${#a2a_vars[@]} env literals in cmd/a2a/main.go; the scan is looking in the wrong place"
+assert_env_rendered "$a2a_dep" "the a2a Deployment" "${a2a_vars[@]}" DATABASE_URL MIGRATIONS_DATABASE_URL
+# Every "<VAR> is required" boot error of cmd/a2a names a variable the Deployment MUST render
+# (regex with digits: A2A_AGENT_URL is not A_AGENT_URL). `|| true`: under set -e a failing
+# substitution would abort silently; let the explicit fail below speak.
+# shellcheck disable=SC2207
+a2a_required=($(grep -hoE '"[A-Z][A-Z0-9_]+ is required' "$repo_dir"/cmd/a2a/*.go --exclude='*_test.go' | sed -E 's/^"([A-Z0-9_]+) is required/\1/' | sort -u || true))
+[[ " ${a2a_required[*]} " == *" A2A_AGENT_URL "* ]] || fail "the mandatory-env scan of cmd/a2a did not find A2A_AGENT_URL (found: ${a2a_required[*]:-nothing})"
+assert_env_rendered "$a2a_dep" "the a2a Deployment" "${a2a_required[@]}"
+# A2A_AGENT_URL defaults to this release's own Service DNS and is overridable.
+agent_url="$(env_value "$a2a_dep" A2A_AGENT_URL || true)"
+[[ "$agent_url" == "http://$release-a2a.warehouse-systems.svc.cluster.local:8093/" ]] || fail "A2A_AGENT_URL must default to the in-cluster Service DNS on :8093, got '${agent_url:-nothing}'"
+overridden="$(render_only a2a-deployment.yaml "${base[@]}" --set a2a.enabled=true --set a2a.agentUrl=http://agents.example.invalid/ti/)"
+[[ "$(env_value "$overridden" A2A_AGENT_URL || true)" == "http://agents.example.invalid/ti/" ]] || fail "a2a.agentUrl does not reach A2A_AGENT_URL"
+[[ "$(env_value "$a2a_dep" A2A_ADDR || true)" == ":8093" ]] || fail "A2A_ADDR must default to :8093"
 
 # analytics: the projector (writer) and reports (reader) over the analytical DB.
 analytics=(--set analytics.enabled=true --set analytics.url=postgres://u@example.invalid:5432/analytics)
@@ -248,7 +274,7 @@ if grep -Eq 'name: (DATABASE_URL|KAFKA_BROKERS)$' <<<"$frontend_dep"; then fail 
 
 # ALL optional components render TOGETHER (ct lint's values file).
 together="$(render "${everything[@]}")"
-for component in api mcp analytics-projector analytics-reports frontend; do
+for component in api mcp a2a analytics-projector analytics-reports frontend; do
   grep -q "app.kubernetes.io/component: $component\$" <<<"$together" || fail "the full render lacks the $component component"
 done
 if grep -E 'kind: (Ingress|HTTPRoute)' <<<"$together" | grep -q frontend; then

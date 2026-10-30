@@ -9,7 +9,7 @@ fleet charts, where a Kong request for an api /healthz was answered by the
 wrong pod. Every Deployment here carries `app.kubernetes.io/component` in
 selector.matchLabels and its pod labels, and every Service selects on it, so
 each Service selects EXACTLY ONE Deployment. Components: api (always), mcp
-(ADR 0007, default off), analytics-projector and analytics-reports (ADR 0008,
+(ADR 0007, default off), a2a (ADR 0009, default off), analytics-projector and analytics-reports (ADR 0008,
 default off) and frontend (the nginx pod serving the task_interleaving_mfe
 remote, default off), all rendered TOGETHER here. The projector has no Service
 (its admin port is probes-only); the frontend is never routed by this chart.
@@ -44,6 +44,7 @@ ENABLE_EVERYTHING = BASE + [
     "--set", "gatewayApi.enabled=true",
     "--set", "ingress.enabled=true",
     "--set", "mcp.enabled=true",
+    "--set", "a2a.enabled=true",
     "--set", "frontend.enabled=true",
     "--set", "analytics.enabled=true",
     "--set", "analytics.url=postgres://u@example.invalid:5432/analytics",
@@ -63,6 +64,8 @@ MCP_STRAY = {
     "KAFKA_BROKERS", "OUTBOX_RELAY_INTERVAL", "OUTBOX_MAX_ATTEMPTS", "FULFILLMENT_CONSUMER_GROUP",
     "LAYOUT_CONSUMER_GROUP", "HINT_EXPIRY_INTERVAL", "ANALYTICS_DATABASE_URL",
 }
+# The A2A server is read-only too: same strays, none of them rendered.
+A2A_STRAY = MCP_STRAY
 # Never rendered: they default to kafka and the binary rejects permissive.
 FORBIDDEN_ENV = ("FULFILLMENT_MODE", "LAYOUT_MODE")
 
@@ -136,6 +139,29 @@ def check_mcp(deployments: dict, services: dict, failures: list[str]) -> None:
             failures.append(f"the MCP Deployment does not render {want}")
 
 
+def check_a2a(deployments: dict, services: dict, failures: list[str]) -> None:
+    name = f"{RELEASE}-a2a"
+    if not pins(services.get(name), "a2a"):
+        failures.append("the A2A Service must exist and pin component=a2a")
+    if name not in deployments:
+        failures.append("the A2A Deployment was not rendered with a2a.enabled=true")
+        return
+    if command_of(deployments[name]) != ["/app/a2a"]:
+        failures.append("the A2A Deployment must run /app/a2a")
+    env = set(env_names(deployments[name]))
+    stray = A2A_STRAY & env
+    if stray:
+        failures.append(f"the A2A Deployment must not get Kafka/relay/consumer env (it is read-only and never dials Kafka): {sorted(stray)}")
+    for want in ("DATABASE_URL", "MIGRATIONS_DATABASE_URL", "A2A_ADDR", "A2A_AGENT_URL", "LOG_LEVEL"):
+        if want not in env:
+            failures.append(f"the A2A Deployment does not render {want}")
+    agent_url = env_value(deployments[name], "A2A_AGENT_URL") or ""
+    if not agent_url.startswith("http://") or not agent_url.endswith(":8093/"):
+        failures.append(f"A2A_AGENT_URL must be the absolute in-cluster Service URL on :8093, got {agent_url!r}")
+    if services[name]["spec"]["ports"][0]["port"] != 8093:
+        failures.append("the A2A Service must listen on 8093")
+
+
 def check_analytics(deployments: dict, services: dict, failures: list[str]) -> None:
     projector, reports = f"{RELEASE}-analytics-projector", f"{RELEASE}-analytics-reports"
     if projector not in deployments:
@@ -190,16 +216,17 @@ def check_selectors(docs: list[dict], failures: list[str]) -> None:
     services = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Service"}
     deployments = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Deployment"}
 
-    want = sorted([RELEASE] + [f"{RELEASE}-{c}" for c in ("mcp", "analytics-projector", "analytics-reports", "frontend")])
+    want = sorted([RELEASE] + [f"{RELEASE}-{c}" for c in ("mcp", "a2a", "analytics-projector", "analytics-reports", "frontend")])
     if sorted(deployments) != want:
         failures.append(f"expected the Deployments {want}, got {sorted(deployments)}")
-    want_svc = sorted([RELEASE] + [f"{RELEASE}-{c}" for c in ("mcp", "analytics-reports", "frontend")])
+    want_svc = sorted([RELEASE] + [f"{RELEASE}-{c}" for c in ("mcp", "a2a", "analytics-reports", "frontend")])
     if sorted(services) != want_svc:
         failures.append(f"expected the Services {want_svc}, got {sorted(services)}")
     if not pins(services.get(RELEASE), "api"):
         failures.append("the api Service selector must pin component=api")
 
     check_mcp(deployments, services, failures)
+    check_a2a(deployments, services, failures)
     check_analytics(deployments, services, failures)
     check_frontend(docs, deployments, services, failures)
 
@@ -261,10 +288,10 @@ def check_env(api: dict, failures: list[str]) -> None:
 
 
 def check_defaults(failures: list[str]) -> None:
-    """Default values deploy the api only: no mcp, analytics, frontend, HPA, route or ingress."""
+    """Default values deploy the api only: no mcp, a2a, analytics, frontend, HPA, route or ingress."""
     defaults = render(BASE)
     names = sorted(d["metadata"]["name"] for d in defaults if d.get("kind") in {"Deployment", "Service", "Secret"})
-    optional = [n for n in names if n.endswith(("-mcp", "-frontend", "-analytics-projector", "-analytics-reports", "-analytics"))]
+    optional = [n for n in names if n.endswith(("-mcp", "-a2a", "-frontend", "-analytics-projector", "-analytics-reports", "-analytics"))]
     if optional:
         failures.append(f"optional components rendered with default values: {optional}")
     kinds = sorted(d["kind"] for d in defaults)
@@ -313,8 +340,8 @@ def main() -> int:
             print(f"FAIL: {f}")
         return 1
 
-    print("PASS: every Service selects exactly one Deployment (api, mcp, analytics-reports, frontend; the projector has none); "
-          "mcp, analytics, frontend, HPA and routes are off by default; "
+    print("PASS: every Service selects exactly one Deployment (api, mcp, a2a, analytics-reports, frontend; the projector has none); "
+          "mcp, a2a, analytics, frontend, HPA and routes are off by default; "
           "every cmd/api env var has a dedicated value and no *_MODE is rendered; the chart refuses to "
           "render without a database source, without brokers, with an empty consumer group, with a "
           "*_MODE injected through extraEnv or with analytics on but no DSN source")

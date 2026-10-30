@@ -1,5 +1,5 @@
 # Used by `helm lint` / `ct lint`: every optional value and component set at
-# once (api + mcp + projector + reports + frontend).
+# once (api + mcp + a2a + projector + reports + frontend).
 database:
   existingSecret: "task-interleaving-db"
 kafka:
@@ -33,6 +33,14 @@ autoscaling:
   api:
     enabled: true
 mcp:
+  enabled: true
+  route:
+    enabled: true
+    parentRefs:
+      - name: warehouse-gateway
+        namespace: kong
+        sectionName: http
+a2a:
   enabled: true
   route:
     enabled: true

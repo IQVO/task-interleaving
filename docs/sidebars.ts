@@ -106,6 +106,26 @@ const sidebars: SidebarsConfig = {
           label: '0005 Persistence and evaluation semantics',
           href: '/docs/adr/0005-persistence-and-evaluation-semantics',
         },
+        {
+          type: 'link',
+          label: '0006 Postgres and Kafka are the only runtime',
+          href: '/docs/adr/0006-postgres-and-kafka-are-the-only-runtime',
+        },
+        {
+          type: 'link',
+          label: '0007 Read-only MCP server',
+          href: '/docs/adr/0007-mcp-server-adoption',
+        },
+        {
+          type: 'link',
+          label: '0008 Analytics read side',
+          href: '/docs/adr/0008-analytics-read-side',
+        },
+        {
+          type: 'link',
+          label: '0009 A2A inbound adapter',
+          href: '/docs/adr/0009-a2a-inbound-adapter',
+        },
       ],
     },
   ],
