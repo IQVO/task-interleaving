@@ -152,7 +152,7 @@ surviving mutant. A failing scheduled run opens or refreshes a `harness:red` iss
 sensors listed with their rules on [Architecture](/docs/overview/architecture#rules-enforced-by-internalarchitecture).
 Each sensor that scans source also has a test that proves it can fail
 (`...SensorBites`, `...SensorFailsOnBadFixtures`, `TestEventCatalogueDetector`).
-No sensor skips: the MCP sensors run against `internal/adapters/inbound/mcp`.
+No sensor skips: the MCP sensors run against `internal/adapters/inbound/mcp` and the A2A sensors against `internal/adapters/inbound/a2a` and `cmd/a2a`.
 
 ```bash
 make arch-test

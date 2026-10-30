@@ -254,6 +254,42 @@ mcp:
       cpu: 100m
       memory: 128Mi
 
+# cmd/a2a (ADR 0009): the read-only A2A server (Agent2Agent JSON-RPC over HTTP
+# at / and /a2a, Agent Card at /.well-known/agent-card.json). Two curated read
+# skills over the same use cases as REST and MCP; it writes nothing: no outbox
+# relay, no consumer, no Kafka. No auth, by fleet decision: the in-cluster
+# ClusterIP boundary is the access control.
+a2a:
+  enabled: false
+  replicaCount: 1
+  httpAddr: ":8093"                  # A2A_ADDR
+  # A2A_AGENT_URL: the absolute http(s) URL the Agent Card advertises. Empty
+  # (default) renders this release's in-cluster Service DNS
+  # (http://<release>-a2a.<namespace>.svc.cluster.local:<service.port>/); set it
+  # when clients reach the agent through another address.
+  agentUrl: ""
+  service:
+    type: ClusterIP
+    port: 8093
+    targetPort: 8093
+  # Kong exposure: /api/a2a/task-interleaving -> Service :8093, prefix
+  # rewritten to /. Needs the Gateway parentRef from warehouse-infra.
+  route:
+    enabled: false
+    path: "/api/a2a/task-interleaving"
+    parentRefs:
+      - name: ""
+        namespace: ""
+        sectionName: "http"
+  extraEnv: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
 # The analytics read side (ADR 0008): ti-projector (the only writer of the
 # analytical database, fed by warehouse.task-interleaving.analytics) and
 # ti-reports (read-only: GET /reports/hint-adoption and /reports/freshness).

@@ -158,6 +158,10 @@ Service pair, pinned by app.kubernetes.io/component (tests/test_service_selector
 {{- include "task-interleaving.fullname" . }}-mcp
 {{- end }}
 
+{{- define "task-interleaving.a2aFullname" -}}
+{{- include "task-interleaving.fullname" . }}-a2a
+{{- end }}
+
 {{- define "task-interleaving.analyticsProjectorFullname" -}}
 {{- include "task-interleaving.fullname" . }}-analytics-projector
 {{- end }}

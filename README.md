@@ -20,10 +20,11 @@ The service is on `develop` (merged in PR #7). One binary, `cmd/api`:
 Also built, each its own binary and its own chart component (all off by default):
 
 - `cmd/mcp`: a read-only MCP server (Streamable HTTP, `/mcp`, port 8090) with `get_site_policy`, `list_hints`, `get_hint` and `get_station` over the existing queries; no write tool, no Kafka ([ADR 0007](docs/adr/0007-mcp-server-adoption.md));
+- `cmd/a2a`: a read-only A2A (Agent2Agent) server (JSON-RPC over HTTP at `/` and `/a2a`, Agent Card at `/.well-known/agent-card.json`, port 8093, `A2A_AGENT_URL` mandatory) with two goal-shaped read skills, `station_hint_status` and `site_interleaving_overview`, over the same read use cases as REST and MCP; no write skill, no Kafka ([ADR 0009](docs/adr/0009-a2a-inbound-adapter.md));
 - `cmd/ti-projector` and `cmd/ti-reports`: the analytics read side over a separate analytical database, fed by `warehouse.task-interleaving.analytics`; `GET /reports/hint-adoption` and `GET /reports/freshness` ([ADR 0008](docs/adr/0008-analytics-read-side.md));
 - `web/`: the `task_interleaving_mfe` Module Federation remote (hints, stations, site policy with `If-Match`), served by its own nginx image and calling only `/api/task-interleaving`.
 
-Packaged: a `Dockerfile` that builds every `cmd/*` binary, a web image (`web/Dockerfile`) and a Helm chart (`charts/task-interleaving`) that render the Postgres + Kafka runtime plus the optional mcp, analytics and frontend components. Not built: OpenTelemetry metrics or traces, a `warehouse-infra` entry, the shell's entry for the remote in `warehouse-console`, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge. The Runbook and Integration pages give the exact state of each edge.
+Packaged: a `Dockerfile` that builds every `cmd/*` binary, a web image (`web/Dockerfile`) and a Helm chart (`charts/task-interleaving`) that render the Postgres + Kafka runtime plus the optional mcp, a2a, analytics and frontend components. Not built: OpenTelemetry metrics or traces, a `warehouse-infra` entry, the shell's entry for the remote in `warehouse-console`, and a consumer of the hint in fulfillment-execution. The Runbook and Integration pages give the exact state of each edge. The Runbook and Integration pages give the exact state of each edge.
 
 ## Run it
 
@@ -51,12 +52,13 @@ Every variable is on [Configuration](docs/docs/operations/configuration.md); the
 apis/                 openapi.yaml, asyncapi.yaml (the contracts)
 charts/task-interleaving/  Helm chart (values, templates, tests/), plus the root Dockerfile
 cmd/api/              the composition root (config, adapters, consumers, relay, topics)
+cmd/a2a/              the read-only A2A server (composition root, router; ADR 0009)
 migrations/           embedded SQL migrations (0001_interleaving_schema)
 features/             godog scenarios (6 .feature files, 68 scenarios) and their runner and steps (package features_test); the repo root holds no .go file
 docs/                 Docusaurus site (docs/docs) and the ADRs (docs/adr)
 internal/domain/      policy, travel, recommend, stationtrip
 internal/application/ usecases, ports, repository, outbox
-internal/adapters/    inbound/{http,kafka,expiry}, outbound/{postgres,memory,events,outbox,kafka,system}, kafka/cloudevents
+internal/adapters/    inbound/{http,kafka,expiry,mcp,a2a}, outbound/{postgres,memory,events,outbox,kafka,system}, kafka/cloudevents
 internal/architecture hexagonal and fleet fitness tests
 internal/testing/     testcontainers helpers and the repository contract suite
 scripts/harness/      agent-guide and config lint
@@ -95,8 +97,8 @@ Published at <https://iqvo.github.io/task-interleaving/> (built from `docs/` by 
 | Subdomain classification | [`docs/docs/ddd/subdomain-classification.md`](docs/docs/ddd/subdomain-classification.md) | Supporting, WES tier, neighbours from the fleet table |
 | DDD artifacts | [`docs/docs/ddd/ddd-artifacts.md`](docs/docs/ddd/ddd-artifacts.md) | Index of the 11-page ddd-crew pack (core domain chart, canvas, context map, aggregate canvas, message flow, EventStorming, language, class, ER, sequence, events) |
 | API reference | [`docs/docs/api-reference/overview.md`](docs/docs/api-reference/overview.md), [`events.md`](docs/docs/api-reference/events.md) | REST (generated from `apis/openapi.yaml`) and event catalogue |
-| ADRs | [`docs/adr/index.md`](docs/adr/index.md) | Decisions 0001 to 0008 with status |
+| ADRs | [`docs/adr/index.md`](docs/adr/index.md) | Decisions 0001 to 0009 with status |
 
-The MCP server and the analytics read side are described in ADRs 0007 and 0008; the REST pages include the two `/reports/...` operations served by `cmd/ti-reports`.
+The MCP server, the analytics read side and the A2A server are described in ADRs 0007, 0008 and 0009; the REST pages include the two `/reports/...` operations served by `cmd/ti-reports`.
 
 Build the site locally: `cd docs && npm ci && npm run build`.
