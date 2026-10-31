@@ -344,6 +344,14 @@ answering `/readyz` 200 ([ADR 0008](/docs/adr/0008-analytics-read-side)).
 Service (port 8090); `mcp.route.enabled=true` publishes it through Kong at
 `/api/mcp/task-interleaving`.
 
+**A2A.** `a2a.enabled=true` renders the read-only `cmd/a2a` Deployment and
+Service (port 8093); `A2A_AGENT_URL` defaults to the release's in-cluster
+Service DNS (`http://<release>-a2a.<namespace>.svc.cluster.local:8093/`) and
+`a2a.agentUrl` overrides it; `a2a.route.enabled=true` publishes it through Kong
+at `/api/a2a/task-interleaving` (prefix rewritten to `/`, so the Agent Card is
+at `/api/a2a/task-interleaving/.well-known/agent-card.json`)
+([ADR 0009](/docs/adr/0009-a2a-inbound-adapter)).
+
 **Web remote.** `frontend.enabled=true` renders the nginx Deployment and a
 ClusterIP Service for `task_interleaving_mfe`; the Nginx web gateway in
 `warehouse-infra` owns `/mfes/task-interleaving/`. Kong's CORS plugin allows

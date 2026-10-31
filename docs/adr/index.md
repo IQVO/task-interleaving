@@ -21,3 +21,4 @@ one. The *Status* column is copied from each ADR's own `## Status` section.
 | [0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime) | Postgres and Kafka are the only runtime | Accepted (2026-10-17) |
 | [0007](/docs/adr/0007-mcp-server-adoption) | a read-only MCP server | Accepted (2026-10-18) |
 | [0008](/docs/adr/0008-analytics-read-side) | Analytics read side: a projector and a hint-adoption report over a separate analytical database | Accepted (2026-10-18) |
+| [0009](/docs/adr/0009-a2a-inbound-adapter) | A2A inbound adapter | Accepted (2026-10-29) |

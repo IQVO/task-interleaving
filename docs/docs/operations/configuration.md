@@ -98,6 +98,7 @@ These are constants in the source; changing them needs a code change.
 | Binary | Variables | Notes |
 | --- | --- | --- |
 | `cmd/mcp` | `MCP_ADDR` (default `:8090`), `LOG_LEVEL`, `DATABASE_URL` (required), `MIGRATIONS_DATABASE_URL` | Read-only MCP over the OLTP database; starts no relay, consumer or worker ([ADR 0007](/docs/adr/0007-mcp-server-adoption)). |
+| `cmd/a2a` | `A2A_ADDR` (default `:8093`), `A2A_AGENT_URL` (required: the absolute http(s) URL the Agent Card advertises), `LOG_LEVEL`, `DATABASE_URL` (required), `MIGRATIONS_DATABASE_URL` | Read-only A2A over the OLTP database; starts no relay, consumer or worker ([ADR 0009](/docs/adr/0009-a2a-inbound-adapter)). |
 | `cmd/ti-projector` | `ANALYTICS_DATABASE_URL` and `KAFKA_BROKERS` (required), `ANALYTICS_CONSUMER_GROUP` (default `task-interleaving-analytics`), `ADMIN_ADDR` (default `:8091`), `LOG_LEVEL` | The only writer of the analytical database; never opens the OLTP one ([ADR 0008](/docs/adr/0008-analytics-read-side)). |
 | `cmd/ti-reports` | `ANALYTICS_DATABASE_URL` (required), `HTTP_ADDR` (default `:8092`), `LOG_LEVEL` | Read-only; never dials Kafka. |
 | `web/` | runtime `window.__WAREHOUSE_CONFIG__.apiOrigin`, set by the console shell | Calls only `<apiOrigin>/api/task-interleaving`. |
@@ -110,6 +111,7 @@ These are constants in the source; changing them needs a code change.
   `TestNoAuthMiddlewareReintroduced` fails the build if a bearer or JWT check
   appears under `internal/adapters/inbound`.
 - **No MCP auth or write variables.** `cmd/mcp` reads only `MCP_ADDR`, `LOG_LEVEL`, `DATABASE_URL` and `MIGRATIONS_DATABASE_URL`; it has no Kafka variable.
+- **No A2A auth or write variables.** `cmd/a2a` reads only `A2A_ADDR`, `A2A_AGENT_URL`, `LOG_LEVEL`, `DATABASE_URL` and `MIGRATIONS_DATABASE_URL`; it has no Kafka variable and no default for `A2A_AGENT_URL` (a missing or non-absolute value is a boot error before anything is dialled or bound).
 - **No CORS, rate-limit or feature-flag variables.**
 - **Chart values.** `charts/task-interleaving` maps these variables onto the pod
   (`database.*`, `kafka.brokers`, `config.*`; see

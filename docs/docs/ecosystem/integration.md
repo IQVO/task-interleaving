@@ -150,6 +150,10 @@ in the cluster until `warehouse-infra` installs the chart.
 - **No per-worker data.** Hints are per station; the associate is not an input.
 - The MCP server (`cmd/mcp`, ADR 0007) is inbound and read-only: it calls no
   sibling and exposes no write tool.
+- The A2A server (`cmd/a2a`, ADR 0009) is inbound and read-only like MCP: it
+  answers delegated goals from this context's own state, calls no sibling (no
+  outbound A2A client exists, `TestNoOutboundA2AClient`) and carries no fact:
+  facts still travel as CloudEvents on Kafka.
 - The web remote calls only this context's own `/api/task-interleaving`: no
   sibling context and not the reports service.
 
