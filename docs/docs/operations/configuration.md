@@ -88,7 +88,7 @@ These are constants in the source; changing them needs a code change.
 | Consumer start offset | none committed = first offset (a fresh group replays the whole topic) | `internal/adapters/inbound/kafka/kafka.go` (`readerConfig`) |
 | Expiry sweep batch | 200 stations per sweep | `internal/application/usecases/expire_hints.go` |
 | Request body limit | 64 KiB | `internal/adapters/inbound/http/response.go` |
-| `Idempotency-Key` length | 1 to 128 characters | `internal/adapters/inbound/http/idempotency.go` |
+| `Idempotency-Key` length | 1 to 128 printable ASCII characters (else `400 idempotency-key-invalid`) | `internal/adapters/inbound/http/idempotency.go` |
 | Topics produced | `warehouse.task-interleaving.events`, `warehouse.task-interleaving.analytics` | `internal/adapters/outbound/events/encoder.go` |
 | Topics consumed | `warehouse.fulfillment.events`, `warehouse.facility.events` | `internal/adapters/inbound/kafka/fulfillment_consumer.go`, `layout_consumer.go` |
 | Consumer names in `processed_events` | `task-interleaving-fulfillment`, `task-interleaving-layout` (not Kafka group ids) | `internal/application/usecases/intake.go` |
