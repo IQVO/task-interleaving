@@ -22,3 +22,4 @@ one. The *Status* column is copied from each ADR's own `## Status` section.
 | [0007](/docs/adr/0007-mcp-server-adoption) | a read-only MCP server | Accepted (2026-10-18) |
 | [0008](/docs/adr/0008-analytics-read-side) | Analytics read side: a projector and a hint-adoption report over a separate analytical database | Accepted (2026-10-18) |
 | [0009](/docs/adr/0009-a2a-inbound-adapter) | A2A inbound adapter | Accepted (2026-10-29) |
+| [0010](/docs/adr/0010-adopt-the-fleet-rest-api-guideline) | Adopt the fleet REST API guideline | Accepted (2026-11-01) |

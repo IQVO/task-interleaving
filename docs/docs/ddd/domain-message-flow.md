@@ -136,5 +136,6 @@ flowchart LR
 Source: `internal/application/usecases/recommend.go`, `apis/openapi.yaml`
 (`recommendTasks`), `recommend.Recommend`. Branches:
 `422 policy-not-declared`, `422 origin-unknown`, `422 station-position-unknown`
-(no `fromLocation` and no recorded position), `400 idempotency-key-required` and
-`422 idempotency-key-reused` in Postgres mode, where the Idempotency-Key is enforced.
+(no `fromLocation` and no recorded position), `400 idempotency-key-required`,
+`400 idempotency-key-invalid` and `409 idempotency-key-reused` in Postgres mode,
+where the Idempotency-Key is enforced; a replay carries `Idempotency-Replayed: true`.

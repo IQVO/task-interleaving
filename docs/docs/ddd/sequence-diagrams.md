@@ -222,10 +222,10 @@ sequenceDiagram
 
     O->>H: POST /recommendations stationId, fromLocation optional
     H->>I: Postgres mode only
-    alt Idempotency-Key missing or over 128 characters
-        I-->>O: 400 idempotency-key-required
+    alt Idempotency-Key missing or not 1 to 128 printable ASCII characters
+        I-->>O: 400 idempotency-key-required or idempotency-key-invalid
     else key already stored
-        I-->>O: stored answer replayed, or 422 idempotency-key-reused for another body
+        I-->>O: stored answer replayed with Idempotency-Replayed true, or 409 idempotency-key-reused for another request
     end
     I->>UC: Handle station, fromLocation, inside a unit of work
     alt no fromLocation and no recorded position
