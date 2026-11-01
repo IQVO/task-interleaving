@@ -14,7 +14,31 @@ import (
 const (
 	idemHeader = "Idempotency-Key"
 	simulate   = `{"stationId":"STN-07","fromLocation":"A-01"}`
+
+	// replayedHeader marks a replayed answer, and only a replay.
+	replayedHeader = "Idempotency-Replayed"
 )
+
+// expectFirstExecution asserts r carries no replay marker.
+func expectFirstExecution(t *testing.T, r response) {
+	t.Helper()
+	if _, present := r.header[replayedHeader]; present {
+		t.Fatalf("a first execution carries %s: %v", replayedHeader, r.header)
+	}
+}
+
+// expectReplayOf asserts again is the byte-identical stored answer of first,
+// marked Idempotency-Replayed: true.
+func expectReplayOf(t *testing.T, first, again response) {
+	t.Helper()
+	expectFirstExecution(t, first)
+	if got := again.header.Get(replayedHeader); got != "true" {
+		t.Fatalf("replay %s = %q, want true (%v)", replayedHeader, got, again.header)
+	}
+	if again.status != first.status || again.raw != first.raw || again.contentType() != first.contentType() {
+		t.Fatalf("replay differs:\nfirst  %d %s %v\nreplay %d %s %v", first.status, first.raw, first.header, again.status, again.raw, again.header)
+	}
+}
 
 // idempotentWorld is a fixture with the middleware on, the layout seeded and
 // the policy declared.
@@ -29,7 +53,8 @@ func idempotentWorld(t *testing.T) *fixture {
 func TestThePostRequiresAnIdempotencyKey(t *testing.T) {
 	f := idempotentWorld(t)
 	expectProblem(t, f.call(t, http.MethodPost, recommendPath, simulate), http.StatusBadRequest, "idempotency-key-required")
-	expectProblem(t, f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, strings.Repeat("k", 129)), http.StatusBadRequest, "idempotency-key-required")
+	expectProblem(t, f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, strings.Repeat("k", 129)), http.StatusBadRequest, "idempotency-key-invalid")
+	expectProblem(t, f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "caf\u00e9"), http.StatusBadRequest, "idempotency-key-invalid")
 	f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, strings.Repeat("k", 128))
 	if f.trips.gets.Load() != 1 {
 		t.Fatalf("a refused POST ran the use case: %d station lookups", f.trips.gets.Load())
@@ -50,8 +75,9 @@ func TestReplayReturnsTheSameAnswer(t *testing.T) {
 	first := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-1")
 	f.available(t, "task-0000", "PICK", "B-01") // a closer-by-id task arrives
 	again := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-1")
-	if again.raw != first.raw || again.contentType() != "application/json" {
-		t.Fatalf("replay differs:\nfirst  %s\nreplay %s", first.raw, again.raw)
+	expectReplayOf(t, first, again)
+	if again.contentType() != "application/json" {
+		t.Fatalf("replay lost its content type: %v", again.header)
 	}
 	fresh := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-2")
 	if fresh.raw == first.raw || candidateIDs(fresh)[0] != "task-0000" {
@@ -65,14 +91,16 @@ func TestReplayReturnsTheSameAnswer(t *testing.T) {
 func TestTheSameKeyWithAnotherRequestIsRejected(t *testing.T) {
 	f := idempotentWorld(t)
 	f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-1")
-	for name, body := range map[string]string{
-		"other station":    `{"stationId":"STN-08","fromLocation":"A-01"}`,
-		"other location":   `{"stationId":"STN-07","fromLocation":"B-01"}`,
-		"other whitespace": `{"stationId":"STN-07", "fromLocation":"A-01"}`,
-		"no location":      `{"stationId":"STN-07"}`,
+	for name, tc := range map[string]struct{ method, path, body string }{
+		"other station":    {http.MethodPost, recommendPath, `{"stationId":"STN-08","fromLocation":"A-01"}`},
+		"other location":   {http.MethodPost, recommendPath, `{"stationId":"STN-07","fromLocation":"B-01"}`},
+		"other whitespace": {http.MethodPost, recommendPath, `{"stationId":"STN-07", "fromLocation":"A-01"}`},
+		"no location":      {http.MethodPost, recommendPath, `{"stationId":"STN-07"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
-			expectProblem(t, f.call(t, http.MethodPost, recommendPath, body, idemHeader, "k-1"), http.StatusUnprocessableEntity, "idempotency-key-reused")
+			r := f.call(t, tc.method, tc.path, tc.body, idemHeader, "k-1")
+			expectProblem(t, r, http.StatusConflict, "idempotency-key-reused")
+			expectFirstExecution(t, r) // a reuse is not a replay
 		})
 	}
 }
@@ -85,9 +113,7 @@ func TestA4xxAnswerIsStoredAndReplayed(t *testing.T) {
 	f.declare(t) // the world changed, but the key still means the rejection
 	again := f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k-4xx")
 	expectProblem(t, again, http.StatusUnprocessableEntity, "policy-not-declared")
-	if again.raw != first.raw {
-		t.Fatalf("replayed rejection differs: %s vs %s", first.raw, again.raw)
-	}
+	expectReplayOf(t, first, again)
 	f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-new")
 }
 
@@ -141,8 +167,8 @@ func TestTheLoserOfARaceReplaysTheWinnersAnswer(t *testing.T) {
 		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec)))
 	}
 	r := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-race")
-	if r.body["winner"] != true {
-		t.Fatalf("the loser did not replay the winner: %s", r.raw)
+	if r.body["winner"] != true || r.header.Get(replayedHeader) != "true" {
+		t.Fatalf("the loser did not replay the winner (marked as a replay): %s %v", r.raw, r.header)
 	}
 }
 

@@ -707,6 +707,14 @@ components:
                 status: 400
                 detail: send an Idempotency-Key header with a unique value per logical request
                 instance: /recommendations
+            idempotencyKeyInvalid:
+              summary: Malformed Idempotency-Key
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/idempotency-key-invalid
+                title: Idempotency-Key header is invalid
+                status: 400
+                detail: the Idempotency-Key header must be 1 to 128 printable ASCII characters
+                instance: /recommendations
     Unprocessable:
       description: |
         The request is well-formed but cannot be simulated: `policy-not-declared`

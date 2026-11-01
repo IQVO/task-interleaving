@@ -148,10 +148,13 @@ func TestPostgresModeMigratesEnforcesIdempotencyAndWritesNoOutboxForTheSimulatio
 		t.Fatalf("simulate = %d %s", status, body)
 	}
 	status2, body2, hdr2 := svc.simulate(t, simulation, "k-1")
-	if status2 != status || body2 != body || hdr2.Get("Content-Type") != hdr.Get("Content-Type") {
-		t.Fatalf("replay differs: %d %s %v", status2, body2, hdr2)
+	if status2 != status || body2 != body || hdr2.Get("Content-Type") != hdr.Get("Content-Type") || hdr2.Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay differs or is not marked Idempotency-Replayed: %d %s %v", status2, body2, hdr2)
 	}
-	if status, body, _ := svc.simulate(t, `{"stationId":"STN-08","fromLocation":"A-01"}`, "k-1"); status != http.StatusUnprocessableEntity || !strings.Contains(body, "idempotency-key-reused") {
+	if hdr.Get("Idempotency-Replayed") != "" {
+		t.Fatalf("a first execution carries Idempotency-Replayed: %v", hdr)
+	}
+	if status, body, _ := svc.simulate(t, `{"stationId":"STN-08","fromLocation":"A-01"}`, "k-1"); status != http.StatusConflict || !strings.Contains(body, "idempotency-key-reused") {
 		t.Fatalf("reused key = %d %s", status, body)
 	}
 	// Only the policy declaration (analytics) is an outbox fact: the
