@@ -111,7 +111,7 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
-          $ref: "#/components/responses/ConcurrentModification"
+          $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/VersionMismatch"
         "500":
@@ -124,6 +124,7 @@ paths:
         `ETag`). A site that never declared one is a 404 `policy-not-found`: it is
         inert and issues no hints.
       tags: [Policy]
+      x-pagination-exempt: view
       responses:
         "200":
           description: The policy.
@@ -285,7 +286,8 @@ paths:
         `fromLocation`. An empty `candidates` list means no hint would be issued.
         The site must have a declared policy (422 `policy-not-declared`
         otherwise) and the origin must have known geometry (422
-        `origin-unknown`). Accepts an `Idempotency-Key` like every POST.
+        `origin-unknown`). Requires an `Idempotency-Key`; replaying the same key
+        and request returns the original answer with `Idempotency-Replayed: true`.
       tags: [Recommendations]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -301,6 +303,9 @@ paths:
       responses:
         "200":
           description: The ranked candidates; possibly empty.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
@@ -315,6 +320,8 @@ paths:
                   - { rank: 2, taskId: task-9d10, taskType: REPLENISH, location: WH1-FWD-A02-01-01-A, detourM: 12.0 }
         "400":
           $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "500":
@@ -370,6 +377,7 @@ paths:
       operationId: getHintAdoption
       summary: How much of the issued advice operators take, per day
       tags: [Reports]
+      x-pagination-exempt: report
       description: |
         Do operators act on interleaving hints? `days[]` has one row per UTC
         calendar day intersecting `[from, to)` (zeros included); a day's counts
@@ -494,6 +502,14 @@ components:
       schema:
         type: string
         example: '"3"'
+    IdempotencyReplayed:
+      description: >-
+        `true` when this response is the stored answer of an earlier request
+        with the same `Idempotency-Key` and the same method, path and body (the
+        handler did not run again). Absent on the first execution.
+      schema:
+        type: string
+        enum: ["true"]
 
   parameters:
     ReportFrom:
@@ -583,8 +599,9 @@ components:
         retried request safe. The service always runs on Postgres, so it is
         required on every deployment and answered with 400
         `idempotency-key-required` when absent; a replay with the same key and
-        the same body returns the original response, while the same key with a
-        different body is 422 `idempotency-key-reused`.
+        the same request (method, path and body) returns the original response
+        with the header `Idempotency-Replayed: true`, while the same key with a
+        different request is 409 `idempotency-key-reused`.
       schema:
         type: string
         minLength: 1
@@ -694,9 +711,7 @@ components:
       description: |
         The request is well-formed but cannot be simulated: `policy-not-declared`
         (the site is inert), `origin-unknown` (the origin has no known geometry),
-        `station-position-unknown` (no `fromLocation` and no recorded position),
-        or an `Idempotency-Key` reused with a different body
-        (`idempotency-key-reused`).
+        `station-position-unknown` (no `fromLocation` and no recorded position).
       content:
         application/problem+json:
           schema:
@@ -725,14 +740,6 @@ components:
                 title: The station position is unknown
                 status: 422
                 detail: the station has no recorded position; send fromLocation
-                instance: /recommendations
-            idempotencyKeyReused:
-              summary: The key was used with a different body
-              value:
-                type: https://errors.task-interleaving.warehouse-systems.dev/idempotency-key-reused
-                title: Idempotency-Key was already used with a different request
-                status: 422
-                detail: the Idempotency-Key was used with a different request body
                 instance: /recommendations
     PolicyNotFound:
       description: The site has no interleaving policy (it is inert).
@@ -782,18 +789,29 @@ components:
             status: 412
             detail: if-match does not match the current version
             instance: /sites/SITE-1/policy
-    ConcurrentModification:
-      description: Another request changed the policy first.
+    Conflict:
+      description: Another request changed the policy first (`concurrent-modification`), or the Idempotency-Key was already used with a different request (`idempotency-key-reused`).
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
-          example:
-            type: https://errors.task-interleaving.warehouse-systems.dev/concurrent-modification
-            title: The resource was modified by another request; re-fetch the latest version and retry
-            status: 409
-            detail: concurrent modification
-            instance: /sites/SITE-1/policy
+          examples:
+            concurrentModification:
+              summary: Another request changed the policy first
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/concurrent-modification
+                title: The resource was modified by another request; re-fetch the latest version and retry
+                status: 409
+                detail: concurrent modification
+                instance: /sites/SITE-1/policy
+            idempotencyKeyReused:
+              summary: The Idempotency-Key was used with a different request
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: the Idempotency-Key was used with a different request (method, path or body)
+                instance: /recommendations
     InternalError:
       description: Unexpected server error.
       content:
