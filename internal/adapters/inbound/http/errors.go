@@ -25,6 +25,8 @@ var (
 	errHintTTLTooLarge = errors.New("hintTtlSeconds is too large")
 	// errInvalidLocation marks a fromLocation outside the contract's bounds.
 	errInvalidLocation = errors.New("fromLocation must be 1 to 128 characters and not blank")
+	// errUnknownQueryParameter marks a query parameter the operation does not declare.
+	errUnknownQueryParameter = errors.New("unknown query parameter")
 )
 
 // problem is the fixed (status, slug, title, detail) of one error category.
@@ -79,6 +81,7 @@ var problemCatalogue = []struct {
 	{policy.ErrInvalidWeight, policyDetail("verticalWeight must be a finite number of at least 0")},
 	{policy.ErrInvalidTaskTypes, problem{http.StatusBadRequest, "invalid-task-type", "Eligible task types are invalid",
 		"eligibleTaskTypes must be a non-empty subset of PICK, PACK, REBIN, SLAM, RELOCATE, REPLENISH"}},
+	{errUnknownQueryParameter, problem{status: http.StatusBadRequest, slug: "unknown-query-parameter", title: "Unknown query parameter"}},
 	{usecases.ErrInvalidCursor, problem{status: http.StatusBadRequest, slug: "invalid-cursor", title: "Cursor is invalid"}},
 	{usecases.ErrInvalidLimit, problem{status: http.StatusBadRequest, slug: "invalid-limit", title: "Limit is invalid"}},
 	{usecases.ErrInvalidState, problem{status: http.StatusBadRequest, slug: "invalid-state", title: "State is invalid"}},

@@ -65,9 +65,20 @@ func TestIntParam(t *testing.T) {
 	if n, err := get("limit=7"); n != 7 || err != nil {
 		t.Fatalf("7 = %d %v", n, err)
 	}
-	for _, q := range []string{"limit=0", "limit=-1", "limit=x", "limit=1.5"} {
+	for _, q := range []string{"limit=0", "limit=-1", "limit=x", "limit=1.5", "limit=", "limit=&limit=5", "limit=5&limit=6", "limit=&limit=zzz", "limit"} {
 		if _, err := get(q); !errors.Is(err, errInvalidParam) {
 			t.Fatalf("%s: %v", q, err)
+		}
+	}
+}
+
+func TestUnknownParam(t *testing.T) {
+	get := func(q string) string {
+		return unknownParam(httptest.NewRequest(http.MethodGet, "/hints?"+q, http.NoBody), "limit", "cursor")
+	}
+	for q, want := range map[string]string{"": "", "limit=1&cursor=x": "", "after=x": "after", "zeta=1&alpha=2&limit=1": "alpha"} {
+		if got := get(q); got != want {
+			t.Errorf("%q = %q, want %q", q, got, want)
 		}
 	}
 }
