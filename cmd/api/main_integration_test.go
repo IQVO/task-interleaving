@@ -105,6 +105,13 @@ type pgService struct {
 // migrations: boot applies them, wires the Postgres adapters and serves.
 func bootPostgres(t *testing.T) pgService {
 	t.Helper()
+	return bootPostgresWith(t, nil)
+}
+
+// bootPostgresWith is bootPostgres with a hook that may wrap the adapters (to
+// inject a fault) before the server is built over them.
+func bootPostgresWith(t *testing.T, wrap func(*adapters)) pgService {
+	t.Helper()
 	url := pgtest.EmptyURL(t)
 	ad, closeAdapters, err := buildAdapters(t.Context(), url, url, discardLogger())
 	if err != nil {
@@ -113,6 +120,9 @@ func bootPostgres(t *testing.T) pgService {
 	t.Cleanup(closeAdapters)
 	pool := pgtest.Open(t, url)
 	seedWorld(t, ad)
+	if wrap != nil {
+		wrap(&ad)
+	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(buildServer(ad, &inboundhttp.Readiness{})))
 	t.Cleanup(srv.Close)
 	return pgService{srv: srv, ad: ad, count: func(table string) int { return pgtest.Count(t, pool, table) }}
@@ -148,10 +158,13 @@ func TestPostgresModeMigratesEnforcesIdempotencyAndWritesNoOutboxForTheSimulatio
 		t.Fatalf("simulate = %d %s", status, body)
 	}
 	status2, body2, hdr2 := svc.simulate(t, simulation, "k-1")
-	if status2 != status || body2 != body || hdr2.Get("Content-Type") != hdr.Get("Content-Type") {
-		t.Fatalf("replay differs: %d %s %v", status2, body2, hdr2)
+	if status2 != status || body2 != body || hdr2.Get("Content-Type") != hdr.Get("Content-Type") || hdr2.Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay differs or is not marked Idempotency-Replayed: %d %s %v", status2, body2, hdr2)
 	}
-	if status, body, _ := svc.simulate(t, `{"stationId":"STN-08","fromLocation":"A-01"}`, "k-1"); status != http.StatusUnprocessableEntity || !strings.Contains(body, "idempotency-key-reused") {
+	if hdr.Get("Idempotency-Replayed") != "" {
+		t.Fatalf("a first execution carries Idempotency-Replayed: %v", hdr)
+	}
+	if status, body, _ := svc.simulate(t, `{"stationId":"STN-08","fromLocation":"A-01"}`, "k-1"); status != http.StatusConflict || !strings.Contains(body, "idempotency-key-reused") {
 		t.Fatalf("reused key = %d %s", status, body)
 	}
 	// Only the policy declaration (analytics) is an outbox fact: the
@@ -208,8 +221,8 @@ func TestPostgresRejectionLeavesNoEffectAndReplays(t *testing.T) {
 		}
 	}
 	svc.declare(t) // the world changed, the key still means the rejection
-	if status2, body2, _ := svc.simulate(t, simulation, "k-no-policy"); status2 != status || body2 != body {
-		t.Fatalf("rejection replay differs: %d %s", status2, body2)
+	if status2, body2, hdr2 := svc.simulate(t, simulation, "k-no-policy"); status2 != status || body2 != body || hdr2.Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("rejection replay differs or is not marked Idempotency-Replayed: %d %s %v", status2, body2, hdr2)
 	}
 	if n := svc.count("idempotency_keys"); n != 1 {
 		t.Fatalf("idempotency rows = %d, want the stored rejection only", n)
@@ -224,15 +237,18 @@ func TestPostgresConcurrentRequestsWithOneKeyStoreOneAnswer(t *testing.T) {
 	svc.declare(t)
 	const n = 8
 	type result struct {
-		status int
-		body   string
+		status   int
+		body     string
+		replayed bool
 	}
 	results := make([]result, n)
 	var done atomic.Int32
 	finished := make(chan struct{})
 	for i := range n {
 		go func() {
-			results[i].status, results[i].body, _ = svc.simulate(t, simulation, "k-race")
+			var hdr http.Header
+			results[i].status, results[i].body, hdr = svc.simulate(t, simulation, "k-race")
+			results[i].replayed = hdr.Get("Idempotency-Replayed") == "true"
 			if done.Add(1) == n {
 				close(finished)
 			}
@@ -243,10 +259,17 @@ func TestPostgresConcurrentRequestsWithOneKeyStoreOneAnswer(t *testing.T) {
 	case <-time.After(60 * time.Second):
 		t.Fatal("the concurrent requests did not finish")
 	}
+	firstRuns := 0
 	for i, r := range results {
 		if r.status != http.StatusOK || r.body != results[0].body {
 			t.Fatalf("result %d = %d %s, want the original 200 %s", i, r.status, r.body, results[0].body)
 		}
+		if !r.replayed {
+			firstRuns++
+		}
+	}
+	if firstRuns != 1 {
+		t.Fatalf("%d of %d answers were first executions, want exactly one (the rest replay)", firstRuns, n)
 	}
 	if got := svc.count("idempotency_keys"); got != 1 {
 		t.Fatalf("idempotency rows = %d, want 1", got)

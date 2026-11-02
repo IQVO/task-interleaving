@@ -220,8 +220,9 @@ curl -s -X POST localhost:18080/recommendations -H 'Content-Type: application/js
 ```
 
 `T-far` is 30 m away, over `maxDetourM` 25, so it is not a candidate. Repeating
-the request with the same key replays the stored answer byte for byte; the same
-key with another body (`"fromLocation":"B"`) is `422 idempotency-key-reused`;
+the request with the same key replays the stored answer byte for byte, marked
+with the response header `Idempotency-Replayed: true`; the same
+key with another body (`"fromLocation":"B"`) is `409 idempotency-key-reused`;
 `idempotency_keys` then holds `demo-key-1` with status 200. A simulation changes
 nothing: no hint, no outbox row.
 
