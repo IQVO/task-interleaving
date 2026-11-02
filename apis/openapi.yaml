@@ -150,6 +150,9 @@ paths:
         Lists hints newest first, a page at a time. `cursor` is the opaque
         `nextCursor` of the previous page; a response without `nextCursor` is the
         last page. Optional filters narrow by station, site and state.
+        `limit` and `cursor` may each be given once; an empty or repeated `limit`
+        is `invalid-limit`, a repeated `cursor` is `invalid-cursor`, and a query
+        parameter this operation does not declare is `unknown-query-parameter`.
       tags: [Hints]
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -690,6 +693,14 @@ components:
                 title: Limit is invalid
                 status: 400
                 detail: limit must be between 1 and 500
+                instance: /hints
+            unknownQueryParameter:
+              summary: Undeclared query parameter on a paged list
+              value:
+                type: https://errors.task-interleaving.warehouse-systems.dev/unknown-query-parameter
+                title: Unknown query parameter
+                status: 400
+                detail: "unknown query parameter: after"
                 instance: /hints
             invalidState:
               summary: Unknown hint state filter

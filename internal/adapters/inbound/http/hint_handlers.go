@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/claudioed/task-interleaving/internal/application/repository"
@@ -9,8 +10,15 @@ import (
 	"github.com/claudioed/task-interleaving/internal/domain/stationtrip"
 )
 
+// listHintsParams are the query parameters GET /hints declares in apis/openapi.yaml.
+var listHintsParams = []string{"limit", "cursor", "stationId", "siteId", "state"}
+
 // handleListHints backs GET /hints.
 func (s *Server) handleListHints(w http.ResponseWriter, r *http.Request) {
+	if name := unknownParam(r, listHintsParams...); name != "" {
+		writeError(w, r, fmt.Errorf("%w: %s", errUnknownQueryParameter, name))
+		return
+	}
 	limit, err := intParam(r, "limit", usecases.ErrInvalidLimit)
 	if err != nil {
 		writeError(w, r, err)
@@ -34,6 +42,9 @@ func (s *Server) handleListHints(w http.ResponseWriter, r *http.Request) {
 // empty fails the contract's `pattern: '\S'` like a blank one does.
 func hintQuery(r *http.Request) (usecases.ListHintsQuery, error) {
 	v := r.URL.Query()
+	if len(v["cursor"]) > 1 {
+		return usecases.ListHintsQuery{}, usecases.ErrInvalidCursor
+	}
 	if v.Has("stationId") && isBlank(v.Get("stationId")) {
 		return usecases.ListHintsQuery{}, stationtrip.ErrInvalidStationID
 	}
