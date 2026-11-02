@@ -37,9 +37,14 @@ info:
     for the task types that carry bins, RELOCATE and REPLENISH, ADR 0050), and `ZoneRegistered`,
     `LocationSlotRegistered`, `LocationSlotDecommissioned` and
     `LocationGeometryUpdated` from facility-layout. Each feeds a durable local
-    copy (modes `FULFILLMENT_MODE` and `LAYOUT_MODE`, default `permissive`;
-    consumer groups from `FULFILLMENT_CONSUMER_GROUP` and
-    `LAYOUT_CONSUMER_GROUP`). The consumed messages below are the producers' own
+    copy. Both consumers are always on (`FULFILLMENT_MODE` and `LAYOUT_MODE` only
+    accept `kafka`, ADR 0006); the consumer groups are mandatory env
+    `FULFILLMENT_CONSUMER_GROUP` and `LAYOUT_CONSUMER_GROUP`. A transient handler
+    failure is retried up to five times, then the message is dead-lettered to
+    `<topic>.dlq` with `x-dlq-*` headers; a payload of a handled type that can
+    never be applied (a missing required field, malformed `data`) is
+    dead-lettered at once; a message that is not a valid CloudEvents 1.0 event is
+    skipped with a WARN and committed past; an unknown type is ignored. The consumed messages below are the producers' own
     contracts, decoded independently here and never imported.
 
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
@@ -145,8 +150,8 @@ channels:
     description: |
       fulfillment-execution's integration topic (key and subject = the task id).
       This service consumes `TaskAvailable`, `TaskClaimed` and `TaskCompleted`
-      under a stable consumer group read from env `FULFILLMENT_CONSUMER_GROUP` when
-      `FULFILLMENT_MODE=kafka`. Every other type on the topic is ignored.
+      under a stable consumer group read from the mandatory env
+      `FULFILLMENT_CONSUMER_GROUP`; dead letters go to `warehouse.fulfillment.events.dlq`. Every other type on the topic is ignored.
     publish:
       operationId: consumeFulfillmentTaskEvents
       summary: Consume task availability, claims and completions.
@@ -173,7 +178,8 @@ channels:
       facility-layout's integration topic. This service consumes `ZoneRegistered`
       (key `zoneId`), `LocationSlotRegistered`, `LocationSlotDecommissioned` and
       `LocationGeometryUpdated` (key `locationCode`) under a stable consumer group
-      read from env `LAYOUT_CONSUMER_GROUP` when `LAYOUT_MODE=kafka`. Every other
+      read from the mandatory env `LAYOUT_CONSUMER_GROUP`; dead letters go to
+      `warehouse.facility.events.dlq`. Every other
       type is ignored.
     publish:
       operationId: consumeFacilityLayoutEvents
@@ -476,14 +482,15 @@ components:
         `urn:warehouse:fulfillment-execution:events:TaskCompleted:v1`. Subject and
         Kafka key = the task id; the CloudEvents `time` is the completion time.
         Verified on fulfillment-execution's `origin/develop`: `task_id`,
-        `station_id` and `work_unit_id` are required. This context reads `task_id`
-        and `station_id` (the producer's contract carries `station_id` on every
-        completion, which the plan's table omitted) and ignores every other field
+        `station_id` and `work_unit_id` are required by the producer. This context
+        reads `task_id` (required) and `station_id` and ignores every other field
         (`task_type`, `order_ref`, `line_no`, the RELOCATE `sku`, `from_bin`,
         `to_bin`, `quantity`, `relocation_ref`, ...). The station's new position is
         the completed task's `to_location` from the local pool copy, with its site;
-        a completion of a task absent from the copy is ignored (counted, never
-        dead-lettered).
+        a completion of a task absent from the copy (or without a `to_location`) is
+        recorded as completed and otherwise ignored (no position, no hint; never
+        dead-lettered). `station_id` is optional here: when blank, the claimer
+        recorded in the pool copy is the completing station.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -517,8 +524,8 @@ components:
         `type` = `com.warehouse.wms.facility-layout.zone.ZoneRegistered`, source
         `/warehouse/facility-layout`, dataschema
         `urn:warehouse:facility-layout:events:ZoneRegistered:v1`. Subject and Kafka
-        key = `zoneId`. Only `zoneId` and `siteCode` are used: they give the site of
-        a location. `data` also carries `eventName`, `eventType` and `occurredAt`,
+        key = `zoneId`. Only `zoneId`, `siteCode` (both required) and `zoneCode` (stored) are used:
+        they give the site of a location. `data` also carries `eventName`, `eventType` and `occurredAt`,
         which are ignored.
       contentType: application/cloudevents+json
       tags:
@@ -803,17 +810,18 @@ components:
               const: "urn:warehouse:fulfillment-execution:events:TaskAvailable:v1"
             data:
               type: object
-              required: [task_id, task_type, site_id, from_location, to_location, required_capabilities, priority_band, available_at]
+              description: "This consumer rejects (dead-letters) a payload without task_id, task_type, site_id or from_location. cpt and available_at are never read."
+              required: [task_id, task_type, site_id, from_location]
               properties:
                 task_id: { type: string }
                 task_type: { type: string, description: "The task type; a value outside PICK, PACK, REBIN, SLAM, RELOCATE, REPLENISH is stored but never a candidate." }
                 site_id: { type: string }
                 from_location: { type: string, description: Where the operator must go first. }
-                to_location: { type: string, description: Where the operator ends. }
+                to_location: { type: string, description: "Where the operator ends. Optional for this consumer: a task without it leaves the station no position when completed." }
                 required_capabilities: { type: array, items: { type: string } }
-                cpt: { type: string, format: date-time, description: Omitted when the task has no CPT. }
+                cpt: { type: string, format: date-time, description: Omitted when the task has no CPT. Not read by this service. }
                 priority_band: { type: string, description: Opaque; equal across tasks fulfillment-execution orders as peers. }
-                available_at: { type: string, format: date-time }
+                available_at: { type: string, format: date-time, description: Not read by this service. }
 
     TaskClaimedEvent:
       allOf:
@@ -826,7 +834,8 @@ components:
               const: "urn:warehouse:fulfillment-execution:events:TaskClaimed:v1"
             data:
               type: object
-              required: [task_id, task_type, station_id, claimed_at]
+              description: This consumer requires task_id and a valid station_id (else the message is dead-lettered); a missing claimed_at falls back to the CloudEvents time.
+              required: [task_id, station_id]
               properties:
                 task_id: { type: string }
                 task_type: { type: string }
@@ -845,10 +854,10 @@ components:
             data:
               type: object
               description: Only the fields this service reads; every other field of the producer's payload is ignored.
-              required: [task_id, station_id]
+              required: [task_id]
               properties:
                 task_id: { type: string }
-                station_id: { type: string, description: The station that completed the task. }
+                station_id: { type: string, description: "The station that completed the task; optional here, the pool copy's claimer is used when blank." }
 
     ZoneRegisteredEvent:
       allOf:
@@ -865,6 +874,7 @@ components:
               properties:
                 zoneId: { type: string }
                 siteCode: { type: string }
+                zoneCode: { type: string, description: Stored with the zone; optional. }
 
     LocationSlotRegisteredEvent:
       allOf:
