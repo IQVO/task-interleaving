@@ -29,6 +29,10 @@ type Server struct {
 	Idempotency func(http.Handler) http.Handler
 	// Readiness backs GET /readyz; nil means always ready.
 	Readiness *Readiness
+	// Metrics, when non-nil, is served on GET /metrics: the OTel Prometheus
+	// exporter of cmd/api over the telemetry instruments. nil (handler unit
+	// tests) leaves the route out.
+	Metrics http.Handler
 }
 
 // NewRouter builds the chi router for every operation of apis/openapi.yaml
@@ -39,6 +43,9 @@ func NewRouter(s *Server) http.Handler {
 
 	r.Get("/healthz", handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
+	if s.Metrics != nil {
+		r.Get("/metrics", s.Metrics.ServeHTTP)
+	}
 
 	r.Put("/sites/{siteId}/policy", s.handleDeclarePolicy)
 	r.Get("/sites/{siteId}/policy", s.handleGetPolicy)

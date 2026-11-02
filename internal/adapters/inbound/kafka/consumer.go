@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
 	kafkago "github.com/segmentio/kafka-go"
 
 	"github.com/claudioed/task-interleaving/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/task-interleaving/internal/application/usecases"
+	"github.com/claudioed/task-interleaving/internal/telemetry"
 )
 
 // errBadPayload marks a CloudEvent whose `data` cannot be decoded: a
@@ -121,6 +123,7 @@ func (c *Consumer) HandleMessage(ctx context.Context, value []byte) error {
 	if !ok {
 		return nil
 	}
+	telemetry.ObserveConsumerLag(ctx, c.Name, lagOf(e))
 	err = handle(ctx, e)
 	if !errors.Is(err, errBadPayload) && !errors.Is(err, usecases.ErrInvalidEvent) {
 		return err
@@ -140,6 +143,15 @@ func decodeData[T any](e ce.Event) (T, error) {
 		return v, fmt.Errorf("%w: %w", errBadPayload, err)
 	}
 	return v, nil
+}
+
+// lagOf returns how far this message trails its CloudEvent time (the
+// producer's clock): 0 when the event carries none.
+func lagOf(e ce.Event) time.Duration {
+	if e.Time().IsZero() {
+		return 0
+	}
+	return time.Since(e.Time())
 }
 
 // logOutcome records what a consumer use case did.

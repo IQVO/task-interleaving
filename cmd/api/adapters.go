@@ -16,6 +16,7 @@ import (
 	"github.com/claudioed/task-interleaving/internal/application/ports"
 	"github.com/claudioed/task-interleaving/internal/application/usecases"
 	"github.com/claudioed/task-interleaving/internal/bootretry"
+	"github.com/claudioed/task-interleaving/internal/telemetry"
 )
 
 // adapters is the set of outbound adapters the composition root wires. They
@@ -97,12 +98,15 @@ func (a adapters) intake() usecases.Intake {
 // ranker is the pure recommender's view of the local copies, shared by the
 // read-only simulation and by the hint issuing use cases.
 func (a adapters) ranker() usecases.Ranker {
-	return usecases.Ranker{Pool: a.pool, Book: a.book}
+	// TimedRanker records the recommender latency on the OTel histogram.
+	return telemetry.TimedRanker(usecases.NewRanker(a.pool, a.book))
 }
 
 // tripWriter is what every use case that changes a StationTrip saves through.
 func (a adapters) tripWriter() usecases.TripWriter {
-	return usecases.TripWriter{Trips: a.trips, Events: a.events}
+	// The counting sink turns the hint facts that reach the outbox into the
+	// OTel hint lifecycle counters.
+	return usecases.TripWriter{Trips: a.trips, Events: telemetry.CountingEventSink{Next: a.events}}
 }
 
 // expireHints is the sweeper the expiry worker drives.
@@ -110,8 +114,9 @@ func (a adapters) expireHints() *usecases.ExpireHints {
 	return &usecases.ExpireHints{TripWriter: a.tripWriter(), UoW: a.uow, Clock: a.clock}
 }
 
-// buildServer wires the use cases into the HTTP adapter.
-func buildServer(a adapters, readiness *inboundhttp.Readiness) *inboundhttp.Server {
+// buildServer wires the use cases into the HTTP adapter. metrics, when
+// non-nil, mounts the OTel Prometheus exposition on GET /metrics.
+func buildServer(a adapters, readiness *inboundhttp.Readiness, metrics http.Handler) *inboundhttp.Server {
 	return &inboundhttp.Server{
 		DeclarePolicy: &usecases.DeclarePolicy{Policies: a.policies, Events: a.events, UoW: a.uow, Clock: a.clock},
 		GetPolicy:     &usecases.GetPolicy{Policies: a.policies},
@@ -121,6 +126,7 @@ func buildServer(a adapters, readiness *inboundhttp.Readiness) *inboundhttp.Serv
 		Recommend:     &usecases.Recommend{Trips: a.trips, Policies: a.policies, Ranker: a.ranker()},
 		Idempotency:   a.idempotency,
 		Readiness:     readiness,
+		Metrics:       metrics,
 	}
 }
 
