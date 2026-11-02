@@ -11,12 +11,12 @@ import (
 )
 
 func hintRecord(t *testing.T, r ports.StationTripRepo) {
-	trip := Hinted(t, "STN-1", "hint-1", T0)
+	trip := Hinted(t, stationOne, hintOne, T0)
 	saved(t, r, trip, 0)
-	rec, err := r.GetHint(bg, "hint-1")
+	rec, err := r.GetHint(bg, hintOne)
 	must(t, err)
 	want, _ := trip.Hint()
-	if rec.StationID != "STN-1" || rec.SiteID != Site || rec.Version != 1 || !sameHint(&rec.Hint, &want) {
+	if rec.StationID != stationOne || rec.SiteID != Site || rec.Version != 1 || !sameHint(&rec.Hint, &want) {
 		t.Fatalf("record = %+v, want hint %+v", rec, want)
 	}
 	if len(rec.Hint.Candidates) != 2 || rec.Hint.Candidates[0].Rank != 1 || rec.Hint.Candidates[1].TaskID != recommend.TaskID("task-b") {
@@ -33,29 +33,29 @@ func hintIDs(recs []repository.HintRecord) []string {
 }
 
 func seedHints(t *testing.T, r ports.StationTripRepo) {
-	saved(t, r, Hinted(t, "STN-1", "hint-1", T0), 0)
-	saved(t, r, Hinted(t, "STN-2", "hint-2", T0.Add(time.Minute)), 0)
-	saved(t, r, Hinted(t, "STN-3", "hint-3", T0.Add(time.Minute)), 0)
+	saved(t, r, Hinted(t, stationOne, hintOne, T0), 0)
+	saved(t, r, Hinted(t, "STN-2", hintTwo, T0.Add(time.Minute)), 0)
+	saved(t, r, Hinted(t, "STN-3", hintThree, T0.Add(time.Minute)), 0)
 }
 
 func hintListPaging(t *testing.T, r ports.StationTripRepo) {
 	seedHints(t, r)
 	all, err := r.ListHints(bg, repository.HintFilter{}, "", 10)
 	must(t, err)
-	if want := []string{"hint-3", "hint-2", "hint-1"}; !equalSlice(hintIDs(all), want) {
+	if want := []string{hintThree, hintTwo, hintOne}; !equalSlice(hintIDs(all), want) {
 		t.Fatalf("order = %v, want %v (issued-at then id, newest first)", hintIDs(all), want)
 	}
-	page, err := r.ListHints(bg, repository.HintFilter{}, "hint-3", 1)
+	page, err := r.ListHints(bg, repository.HintFilter{}, hintThree, 1)
 	must(t, err)
-	if want := []string{"hint-2"}; !equalSlice(hintIDs(page), want) {
+	if want := []string{hintTwo}; !equalSlice(hintIDs(page), want) {
 		t.Fatalf("page = %v, want %v", hintIDs(page), want)
 	}
-	last, err := r.ListHints(bg, repository.HintFilter{}, "hint-2", 5)
+	last, err := r.ListHints(bg, repository.HintFilter{}, hintTwo, 5)
 	must(t, err)
-	if want := []string{"hint-1"}; !equalSlice(hintIDs(last), want) {
+	if want := []string{hintOne}; !equalSlice(hintIDs(last), want) {
 		t.Fatalf("last page = %v, want %v", hintIDs(last), want)
 	}
-	if past, err := r.ListHints(bg, repository.HintFilter{}, "hint-1", 5); err != nil || len(past) != 0 {
+	if past, err := r.ListHints(bg, repository.HintFilter{}, hintOne, 5); err != nil || len(past) != 0 {
 		t.Fatalf("past the end = %v %v", hintIDs(past), err)
 	}
 	if none, err := r.ListHints(bg, repository.HintFilter{}, "hint-zz", 5); err != nil || len(none) != 0 {
@@ -76,7 +76,7 @@ func hintListFilters(t *testing.T, r ports.StationTripRepo) {
 		must(t, err)
 		return len(got)
 	}
-	if n := count(repository.HintFilter{StationID: "STN-1"}); n != 1 {
+	if n := count(repository.HintFilter{StationID: stationOne}); n != 1 {
 		t.Fatalf("by station = %d", n)
 	}
 	if n := count(repository.HintFilter{SiteID: "SITE-9"}); n != 0 {
@@ -94,27 +94,27 @@ func hintListFilters(t *testing.T, r ports.StationTripRepo) {
 }
 
 func hintHistoryDepth(t *testing.T, r ports.StationTripRepo) {
-	trip := Hinted(t, "STN-1", "hint-0", T0)
+	trip := Hinted(t, stationOne, "hint-0", T0)
 	saved(t, r, trip, 0)
-	ids := []string{"hint-1", "hint-2", "hint-3", "hint-4"}
+	ids := []string{hintOne, hintTwo, hintThree, hintFour}
 	for i, id := range ids {
 		v := trip.Version()
 		completeAndIssue(t, trip, "task-"+id, id, T0.Add(time.Duration(i+1)*time.Minute))
 		saved(t, r, trip, v)
 	}
-	all, err := r.ListHints(bg, repository.HintFilter{StationID: "STN-1"}, "", 10)
+	all, err := r.ListHints(bg, repository.HintFilter{StationID: stationOne}, "", 10)
 	must(t, err)
-	if want := []string{"hint-4", "hint-3", "hint-2", "hint-1", "hint-0"}; !equalSlice(hintIDs(all), want) {
+	if want := []string{hintFour, hintThree, hintTwo, hintOne, "hint-0"}; !equalSlice(hintIDs(all), want) {
 		t.Fatalf("history = %v, want %v", hintIDs(all), want)
 	}
-	superseded, err := r.ListHints(bg, repository.HintFilter{StationID: "STN-1", State: stationtrip.StateSuperseded}, "", 10)
+	superseded, err := r.ListHints(bg, repository.HintFilter{StationID: stationOne, State: stationtrip.StateSuperseded}, "", 10)
 	must(t, err)
 	if len(superseded) != 4 {
 		t.Fatalf("superseded = %d, want 4", len(superseded))
 	}
-	got, err := r.Get(bg, "STN-1")
+	got, err := r.Get(bg, stationOne)
 	must(t, err)
-	if h, _ := got.Hint(); h.ID != "hint-4" || h.State != stationtrip.StateActive {
+	if h, _ := got.Hint(); h.ID != hintFour || h.State != stationtrip.StateActive {
 		t.Fatalf("current hint = %+v", h)
 	}
 }
@@ -123,20 +123,20 @@ func hintHistoryDepth(t *testing.T, r ports.StationTripRepo) {
 // another station's id is a lost race (ids are unique per hint), and the save
 // leaves nothing behind: not the trip update, not the supersede.
 func hintIDClash(t *testing.T, r ports.StationTripRepo) {
-	saved(t, r, Hinted(t, "STN-1", "hint-1", T0), 0)
-	other := Hinted(t, "STN-2", "hint-2", T0)
+	saved(t, r, Hinted(t, stationOne, hintOne, T0), 0)
+	other := Hinted(t, "STN-2", hintTwo, T0)
 	saved(t, r, other, 0)
 	loaded := other.Version()
-	completeAndIssue(t, other, "task-1", "hint-1", T0.Add(time.Minute))
+	completeAndIssue(t, other, "task-1", hintOne, T0.Add(time.Minute))
 	wantErr(t, r.Save(bg, other, loaded), repository.ErrConcurrentModification)
 	got, err := r.Get(bg, "STN-2")
 	must(t, err)
-	if h, _ := got.Hint(); got.Version() != loaded || h.ID != "hint-2" || h.State != stationtrip.StateActive {
+	if h, _ := got.Hint(); got.Version() != loaded || h.ID != hintTwo || h.State != stationtrip.StateActive {
 		t.Fatalf("the failed save left a trace: version %d, hint %+v", got.Version(), h)
 	}
-	rec, err := r.GetHint(bg, "hint-1")
+	rec, err := r.GetHint(bg, hintOne)
 	must(t, err)
-	if rec.StationID != "STN-1" || rec.Hint.State != stationtrip.StateActive || rec.Version != 1 {
+	if rec.StationID != stationOne || rec.Hint.State != stationtrip.StateActive || rec.Version != 1 {
 		t.Fatalf("hint-1 = %+v", rec)
 	}
 }

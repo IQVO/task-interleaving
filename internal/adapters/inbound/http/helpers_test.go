@@ -45,8 +45,8 @@ func (s *seqIDs) NewHintID() string { return fmt.Sprintf("hint-test-%03d", s.n.A
 
 var errDB = errors.New("db down")
 
-// repoConflict is the error a version-guarded save returns when it loses a race.
-var repoConflict = repository.ErrConcurrentModification
+// errRepoConflict is the error a version-guarded save returns when it loses a race.
+var errRepoConflict = repository.ErrConcurrentModification
 
 // equalJSON compares two decoded JSON values.
 func equalJSON(a, b any) bool { return reflect.DeepEqual(a, b) }

@@ -34,6 +34,9 @@ import (
 	"github.com/claudioed/task-interleaving/internal/application/usecases"
 )
 
+// contentTypeJSON is the only content type this adapter produces or accepts.
+const contentTypeJSON = "application/json"
+
 // Config carries the deployment-specific identity of this agent: the absolute
 // URL clients use to reach its JSON-RPC endpoint (advertised on the Agent Card)
 // and the card version. It is supplied by the composition root from
@@ -76,8 +79,8 @@ func Card(cfg Config) *a2a.AgentCard {
 		SupportedInterfaces: []*a2a.AgentInterface{
 			a2a.NewAgentInterface(cfg.AgentURL, a2a.TransportProtocolJSONRPC),
 		},
-		DefaultInputModes:  []string{"application/json", "text/plain"},
-		DefaultOutputModes: []string{"application/json", "text/plain"},
+		DefaultInputModes:  []string{contentTypeJSON, "text/plain"},
+		DefaultOutputModes: []string{contentTypeJSON, "text/plain"},
 		Capabilities:       a2a.AgentCapabilities{Streaming: false},
 		Skills: []a2a.AgentSkill{
 			{
@@ -85,7 +88,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Interleaving hint status of a station",
 				Description: "Read where one station stands and what it should take next: its site, its position (location code and the point in metres when the geometry is known), the last task it completed and when, and the hint it currently holds, if any, with its ranked candidate tasks (rank, taskId, taskType, location, detourM). Advisory only: a hint never assigns or claims a task. A station that never recorded a completion is answered as station-not-found (404).",
 				Tags:        []string{"interleaving", "station", "hint", "read"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"station_hint_status","arguments":{"stationId":"STN-07"}}`,
 				},
@@ -95,7 +98,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Interleaving overview of a site",
 				Description: "Read how interleaving is set up and behaving at one site: the policy the site declared (maxDetourM, maxCandidates, hintTtlSeconds, eligibleTaskTypes, verticalWeight, version, declaredAt) and its most recent hints, newest first, with how each ended (Active, Consumed, Expired or Superseded) and a count per state. limit (optional, 1..20, default 5) sizes the recent-hint window. A site that never declared a policy is inert (no hint is ever issued for it) and is answered as policy-not-found (404).",
 				Tags:        []string{"interleaving", "site", "policy", "read"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"site_interleaving_overview","arguments":{"siteId":"SITE-1"}}`,
 					`{"skill":"site_interleaving_overview","arguments":{"siteId":"SITE-1","limit":10}}`,

@@ -230,7 +230,7 @@ func TestRelay_CrashAndRestartDoesNotDuplicate(t *testing.T) {
 
 	first := productionRelay(w, &crashAfter{inner: broker, n: 2})
 	published, err := first.RelayOnce(context.Background())
-	var failure *outbox.SendFailure
+	var failure *outbox.SendFailureError
 	if !errors.Is(err, errCrash) || !errors.As(err, &failure) || published != 2 {
 		t.Fatalf("crashing pass = %d, %v; want 2 published then the crash", published, err)
 	}
