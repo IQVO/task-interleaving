@@ -39,7 +39,7 @@ func IdempotencyStore(t *testing.T, newStore func(t *testing.T) ports.Idempotenc
 		s := newStore(t)
 		in := repository.IdempotencyRecord{
 			Key: "k1", Fingerprint: "fp", Status: 201, ContentType: "application/json",
-			Body: []byte(`{"hintId":"hint-1"}`), CreatedAt: T0,
+			Body: []byte(`{"hintId":hintOne}`), CreatedAt: T0,
 		}
 		must(t, s.Save(bg, in))
 		got, ok, err := s.Lookup(bg, "k1")

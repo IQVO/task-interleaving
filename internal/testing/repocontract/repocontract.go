@@ -24,6 +24,15 @@ var T0 = time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
 // Site is the site of every trip and policy the builders make.
 const Site policy.SiteID = "SITE-1"
 
+// Fixture identifiers the trip and hint contract cases share across files.
+const (
+	stationOne = "STN-1"
+	hintOne    = "hint-1"
+	hintTwo    = "hint-2"
+	hintThree  = "hint-3"
+	hintFour   = "hint-4"
+)
+
 var bg = context.Background()
 
 func must(t *testing.T, err error) {

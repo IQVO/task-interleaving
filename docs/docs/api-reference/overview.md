@@ -47,19 +47,24 @@ for real responses.
   the database is `409 concurrent-modification`. Declaring identical values again
   still advances the version.
 - **Paging.** `GET /hints` takes `limit` (1 to 500, default 100) and the opaque
-  `cursor` (the previous page's `nextCursor`). No `nextCursor` marks the last page.
+  `cursor` (the previous page's `nextCursor`). No `nextCursor` marks the last page. Each may be sent once: an empty or repeated
+  `limit` is `400 invalid-limit`, a repeated `cursor` is `400 invalid-cursor`, and a
+  query parameter the operation does not declare is `400 unknown-query-parameter`.
 - **`Idempotency-Key`.** Documented on `POST /recommendations` and implemented by
   `internal/adapters/inbound/http/idempotency.go`. It is required on every
   deployment, since Postgres is the only runtime (`400
-  idempotency-key-required` when absent or longer
-  than 128 characters); the same key with a different method, path or body is
-  `422 idempotency-key-reused`; an equal request replays the stored answer.
+  idempotency-key-required` when absent, `400 idempotency-key-invalid` when it is
+  not 1 to 128 printable ASCII characters); the same key with a different method,
+  path or body is `409 idempotency-key-reused`; an equal request replays the
+  stored answer with the response header `Idempotency-Replayed: true` (a first
+  execution never carries it).
 - **Errors** are RFC 7807 `application/problem+json` with
   `type = https://errors.task-interleaving.warehouse-systems.dev/<slug>`. The slugs
   in the spec: `malformed-request`, `invalid-site-id`, `invalid-station-id`,
   `invalid-hint-id`, `invalid-policy`, `invalid-task-type`, `invalid-cursor`,
-  `invalid-limit`, `invalid-state`, `idempotency-key-required`,
-  `idempotency-key-reused`, `policy-not-declared`, `origin-unknown`,
+  `invalid-limit`, `unknown-query-parameter`, `invalid-state`, `idempotency-key-required`,
+  `idempotency-key-invalid`, `idempotency-key-reused`, `policy-not-declared`,
+  `origin-unknown`,
   `station-position-unknown`, `policy-not-found`, `hint-not-found`,
   `station-not-found`, `version-mismatch`, `concurrent-modification` and
   `internal-error`. The errors that map to these slugs are listed on

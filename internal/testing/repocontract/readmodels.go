@@ -8,6 +8,12 @@ import (
 	"github.com/claudioed/task-interleaving/internal/domain/travel"
 )
 
+// Fixture identifiers the read-model and trip contract cases share.
+const (
+	capForklift = "FORKLIFT"
+	zoneFWD     = "FWD"
+)
+
 // TaskPool runs the TaskPool contract over an EMPTY pool.
 func TaskPool(t *testing.T, newPool func(t *testing.T) ports.TaskPool) {
 	t.Helper()
@@ -27,7 +33,7 @@ func TaskPool(t *testing.T, newPool func(t *testing.T) ports.TaskPool) {
 func task(id, site string, state repository.TaskState) repository.Task {
 	return repository.Task{
 		ID: id, Type: "PICK", SiteID: site, FromLocation: "LOC-F-" + id, ToLocation: "LOC-T-" + id,
-		RequiredCapabilities: []string{"FORKLIFT", "COLD"}, PriorityBand: "band-1", State: state,
+		RequiredCapabilities: []string{capForklift, "COLD"}, PriorityBand: "band-1", State: state,
 	}
 }
 
@@ -50,7 +56,7 @@ func poolUnseen(t *testing.T, p ports.TaskPool) {
 
 func poolRoundTrip(t *testing.T, p ports.TaskPool) {
 	in := task("t1", "S1", repository.TaskClaimed)
-	in.ClaimedBy = "STN-1"
+	in.ClaimedBy = stationOne
 	must(t, p.Save(bg, in))
 	got, ok, err := p.Get(bg, "t1")
 	must(t, err)
@@ -88,14 +94,14 @@ func poolUpsert(t *testing.T, p ports.TaskPool) {
 }
 
 func poolCopiesSlice(t *testing.T, p ports.TaskPool) {
-	caps := []string{"FORKLIFT"}
+	caps := []string{capForklift}
 	in := task("t1", "S1", repository.TaskAvailable)
 	in.RequiredCapabilities = caps
 	must(t, p.Save(bg, in))
 	caps[0] = "mutated"
 	got, _, err := p.Get(bg, "t1")
 	must(t, err)
-	if got.RequiredCapabilities[0] != "FORKLIFT" {
+	if got.RequiredCapabilities[0] != capForklift {
 		t.Fatalf("the pool shares the caller's slice: %+v", got)
 	}
 }
@@ -171,7 +177,7 @@ func bookGeometryFirst(t *testing.T, b ports.LocationBook) {
 }
 
 func bookJoinsZone(t *testing.T, b ports.LocationBook) {
-	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: "SITE-1", ZoneCode: "FWD"}))
+	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: string(Site), ZoneCode: zoneFWD}))
 	must(t, b.SaveLocation(bg, "LOC-1", "z1"))
 	must(t, b.SaveLocation(bg, "LOC-2", "z1"))
 	must(t, b.SaveGeometry(bg, "LOC-1", -1.5, 0, 4.25))
@@ -179,11 +185,11 @@ func bookJoinsZone(t *testing.T, b ports.LocationBook) {
 	if len(got) != 2 {
 		t.Fatalf("places = %+v", got)
 	}
-	if got["LOC-1"].SiteCode != "SITE-1" || got["LOC-1"].Decommissioned {
+	if got["LOC-1"].SiteCode != string(Site) || got["LOC-1"].Decommissioned {
 		t.Fatalf("LOC-1 = %+v", got["LOC-1"])
 	}
 	wantPoint(t, got["LOC-1"], travel.Point{X: -1.5, Y: 0, Z: 4.25})
-	if got["LOC-2"].SiteCode != "SITE-1" || got["LOC-2"].Point != nil {
+	if got["LOC-2"].SiteCode != string(Site) || got["LOC-2"].Point != nil {
 		t.Fatalf("LOC-2 (no geometry) = %+v", got["LOC-2"])
 	}
 }
@@ -193,11 +199,11 @@ func bookZoneLater(t *testing.T, b ports.LocationBook) {
 	if got := places(t, b, "LOC-1")["LOC-1"]; got.SiteCode != "" {
 		t.Fatalf("before the zone: %+v", got)
 	}
-	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: "SITE-1", ZoneCode: "FWD"}))
-	if got := places(t, b, "LOC-1")["LOC-1"]; got.SiteCode != "SITE-1" {
+	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: string(Site), ZoneCode: zoneFWD}))
+	if got := places(t, b, "LOC-1")["LOC-1"]; got.SiteCode != string(Site) {
 		t.Fatalf("after the zone: %+v", got)
 	}
-	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: "SITE-2", ZoneCode: "FWD"}))
+	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: "SITE-2", ZoneCode: zoneFWD}))
 	if got := places(t, b, "LOC-1")["LOC-1"]; got.SiteCode != "SITE-2" {
 		t.Fatalf("zone replaced: %+v", got)
 	}
@@ -211,24 +217,24 @@ func bookGeometryReplaced(t *testing.T, b ports.LocationBook) {
 
 func bookRegistrationKeepsPoint(t *testing.T, b ports.LocationBook) {
 	must(t, b.SaveGeometry(bg, "LOC-1", 1, 2, 3))
-	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: "SITE-1"}))
+	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: string(Site)}))
 	must(t, b.SaveLocation(bg, "LOC-1", "z1"))
 	must(t, b.SaveLocation(bg, "LOC-1", "z1")) // a replayed registration
 	p := places(t, b, "LOC-1")["LOC-1"]
-	if p.SiteCode != "SITE-1" {
+	if p.SiteCode != string(Site) {
 		t.Fatalf("site = %q", p.SiteCode)
 	}
 	wantPoint(t, p, travel.Point{X: 1, Y: 2, Z: 3})
 }
 
 func bookDecommission(t *testing.T, b ports.LocationBook) {
-	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: "SITE-1"}))
+	must(t, b.SaveZone(bg, repository.Zone{ID: "z1", SiteCode: string(Site)}))
 	must(t, b.SaveLocation(bg, "LOC-1", "z1"))
 	must(t, b.SaveGeometry(bg, "LOC-1", 1, 2, 3))
 	must(t, b.DecommissionLocation(bg, "LOC-1"))
 	must(t, b.SaveLocation(bg, "LOC-1", "z1")) // a late registration cannot bring it back
 	p := places(t, b, "LOC-1")["LOC-1"]
-	if !p.Decommissioned || p.SiteCode != "SITE-1" {
+	if !p.Decommissioned || p.SiteCode != string(Site) {
 		t.Fatalf("LOC-1 = %+v", p)
 	}
 	wantPoint(t, p, travel.Point{X: 1, Y: 2, Z: 3})

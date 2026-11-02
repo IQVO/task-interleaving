@@ -180,6 +180,9 @@ func TestListQueriesAreValidated(t *testing.T) {
 	f := newFixture(t)
 	cases := map[string]string{
 		"limit=0": "invalid-limit", "limit=501": "invalid-limit", "limit=abc": "invalid-limit", "limit=-5": "invalid-limit", "limit=1.5": "invalid-limit",
+		"limit=": "invalid-limit", "limit=&limit=zzz": "invalid-limit", "limit=5&limit=6": "invalid-limit",
+		"cursor=aGludC0z&cursor=aGludC0z": "invalid-cursor",
+		"after=x":                         "unknown-query-parameter", "offset=1": "unknown-query-parameter", "limit=1&nextToken=x": "unknown-query-parameter",
 		"cursor=***": "invalid-cursor", "cursor=!!": "invalid-cursor",
 		"state=Open": "invalid-state", "state=active": "invalid-state", "state=": "invalid-state",
 		"stationId=": "invalid-station-id", "stationId=a%2Fb": "invalid-station-id", "stationId=%20%20": "invalid-station-id",

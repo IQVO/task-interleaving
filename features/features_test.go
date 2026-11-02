@@ -83,7 +83,7 @@ func wire(clock *bddClock) (app, *memory.EventLog) {
 	uow := memory.NewUnitOfWork(policies, trips, pool, book, events, processed)
 	intake := usecases.Intake{UoW: uow, Processed: processed}
 	writer := usecases.TripWriter{Trips: trips, Events: events}
-	ranker := usecases.Ranker{Pool: pool, Book: book}
+	ranker := usecases.NewRanker(pool, book)
 	ids := &sequentialIDs{}
 	return app{
 		declarePolicy: &usecases.DeclarePolicy{Policies: policies, Events: events, UoW: uow, Clock: clock},

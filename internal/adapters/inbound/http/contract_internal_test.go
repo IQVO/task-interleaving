@@ -128,7 +128,7 @@ func TestProblemSlugsMatchTheContract(t *testing.T) {
 	exampleSlugs(loadSpec(t), documented)
 
 	produced := map[string]bool{
-		internalProblem.slug: true, idempotencyKeyRequired.slug: true, idempotencyKeyReused.slug: true,
+		internalProblem.slug: true, idempotencyKeyRequired.slug: true, idempotencyKeyInvalid.slug: true, idempotencyKeyReused.slug: true,
 		dependencyUnavailable.slug: true,
 		// answered by the separate ti-reports binary
 		invalidReportRange.slug: true, invalidReportGranularity.slug: true, reportStoreError.slug: true,
@@ -182,6 +182,7 @@ func TestProblemStatusesMatchTheContract(t *testing.T) {
 	}
 	check(internalProblem.slug, internalProblem.status)
 	check(idempotencyKeyRequired.slug, idempotencyKeyRequired.status)
+	check(idempotencyKeyInvalid.slug, idempotencyKeyInvalid.status)
 	check(idempotencyKeyReused.slug, idempotencyKeyReused.status)
 	for _, entry := range problemCatalogue {
 		check(entry.p.slug, entry.p.status)
@@ -211,7 +212,7 @@ func TestFixedProblemTitlesMatchTheContractExamples(t *testing.T) {
 		}
 	}
 	walk(loadSpec(t))
-	all := []problem{internalProblem, idempotencyKeyRequired, idempotencyKeyReused}
+	all := []problem{internalProblem, idempotencyKeyRequired, idempotencyKeyInvalid, idempotencyKeyReused}
 	for _, entry := range problemCatalogue {
 		all = append(all, entry.p)
 	}

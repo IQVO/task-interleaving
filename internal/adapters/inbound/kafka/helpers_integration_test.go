@@ -77,7 +77,7 @@ func (w *pgWorld) fulfillmentUseCases() kafkaconsumer.FulfillmentUseCases {
 		Claimed:   &usecases.ApplyTaskClaimed{Intake: w.intake(), TripWriter: writer, Pool: w.pool, Clock: system.Clock{}},
 		Completed: &usecases.ApplyTaskCompleted{
 			Intake: w.intake(), TripWriter: writer, Policies: w.policies, Pool: w.pool,
-			Ranker: usecases.Ranker{Pool: w.pool, Book: w.book}, Clock: system.Clock{}, IDs: system.RandomIDs{},
+			Ranker: usecases.NewRanker(w.pool, w.book), Clock: system.Clock{}, IDs: system.RandomIDs{},
 		},
 	}
 }

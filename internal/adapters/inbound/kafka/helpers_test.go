@@ -151,7 +151,7 @@ func (w *world) fulfillmentUseCases() kafkaconsumer.FulfillmentUseCases {
 		Claimed:   &usecases.ApplyTaskClaimed{Intake: w.intake(), TripWriter: writer, Pool: w.pool, Clock: fixedClock{}},
 		Completed: &usecases.ApplyTaskCompleted{
 			Intake: w.intake(), TripWriter: writer, Policies: w.policies, Pool: w.pool,
-			Ranker: usecases.Ranker{Pool: w.pool, Book: w.book}, Clock: fixedClock{}, IDs: &seqIDs{},
+			Ranker: usecases.NewRanker(w.pool, w.book), Clock: fixedClock{}, IDs: &seqIDs{},
 		},
 	}
 }

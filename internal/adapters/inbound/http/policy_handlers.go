@@ -45,7 +45,7 @@ func declareInput(r *http.Request, site string) (usecases.DeclarePolicyInput, er
 	if err := requiredSettings(body); err != nil {
 		return usecases.DeclarePolicyInput{}, err
 	}
-	if *body.HintTTLSeconds > maxHintTTLSeconds {
+	if *body.HintTTLSeconds > policy.MaxHintTTLSeconds {
 		return usecases.DeclarePolicyInput{}, errHintTTLTooLarge
 	}
 	return usecases.DeclarePolicyInput{

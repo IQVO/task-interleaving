@@ -63,7 +63,7 @@ func (w *world) commandFails(want string) error {
 		return fmt.Errorf("the command succeeded, want an error containing %q", want)
 	}
 	if !strings.Contains(w.err.Error(), want) {
-		return fmt.Errorf("the command failed with %q, want it to contain %q", w.err, want)
+		return fmt.Errorf("the command failed with %w, want it to contain %q", w.err, want)
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ func (w *world) policyDetails(weight float64, types string) error {
 func (w *world) noPolicy(site string) error {
 	_, err := w.uc.getPolicy.Handle(w.ctx, site)
 	if !errors.Is(err, repository.ErrPolicyNotFound) {
-		return fmt.Errorf("site %q policy lookup = %v, want not found", site, err)
+		return fmt.Errorf("site %q policy lookup = %w, want not found", site, err)
 	}
 	return nil
 }

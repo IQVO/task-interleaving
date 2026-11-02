@@ -66,14 +66,15 @@ are the catalogue in `internal/adapters/inbound/http/errors.go`.
 | 400 | `invalid-policy` | `maxDetourM` not a finite number above 0; `maxCandidates` outside 1 to 5; `hintTtlSeconds` not above 0 or above 2147483647; `verticalWeight` negative or non-finite; a required field missing | Use the `detail` text |
 | 400 | `invalid-task-type` | `eligibleTaskTypes` empty, missing or contains something outside `PICK, PACK, REBIN, SLAM, RELOCATE, REPLENISH` | |
 | 400 | `invalid-cursor`, `invalid-limit`, `invalid-state` | Cursor not handed out by this API; `limit` outside 1 to 500; state not `Active`, `Consumed`, `Expired` or `Superseded` | |
-| 400 | `idempotency-key-required` | `POST /recommendations` without an `Idempotency-Key`, or with one longer than 128 characters | Send a unique key per logical request |
+| 400 | `idempotency-key-required` | `POST /recommendations` without an `Idempotency-Key` | Send a unique key per logical request |
+| 400 | `idempotency-key-invalid` | `POST /recommendations` with an `Idempotency-Key` that is not 1 to 128 printable ASCII characters | Send a UUID |
 | 404 | `policy-not-found`, `hint-not-found`, `station-not-found` | Unknown resource. `policy-not-found` means the site is **inert**; `station-not-found` means no completion was ever recorded for it | Normal for a new site or station |
 | 409 | `concurrent-modification` | Two writers raced on one aggregate; the loser's version guard failed | Re-read and retry |
+| 409 | `idempotency-key-reused` | Same `Idempotency-Key` with a different method, path or body | A client bug, do not retry blindly: use a new key, or resend the original request to get the stored answer |
 | 412 | `version-mismatch` | `PUT /sites/{siteId}/policy` with a stale or missing `If-Match` on an existing policy, or with an `If-Match` on a site that has none; an `If-Match` that is not a version (`*`, `W/"1"`) also counts as stale | `GET` the policy and send its `ETag` as `If-Match` |
 | 422 | `policy-not-declared` | `POST /recommendations` for a site without a policy | Declare one |
 | 422 | `origin-unknown` | The origin location has no known geometry in the layout copy (`detail` names it) | Wait for or feed `LocationGeometryUpdated`; try another `fromLocation` |
 | 422 | `station-position-unknown` | No `fromLocation` given and the station has no recorded position | Send `fromLocation` |
-| 422 | `idempotency-key-reused` | Same `Idempotency-Key` with a different method, path or body | Use a new key, or resend the original request to get the stored answer |
 | 500 | `internal-error` | Unmapped error or handler panic; `detail` is always `an unexpected error occurred` | Read the `request failed` / `handler panicked` log line |
 | 503 | `dependency-unavailable` | `GET /readyz` only: Postgres or the Kafka broker (no broker answers a metadata request; topics are never checked) is not usable; `detail` is `not ready: ` plus the names | See the `/readyz` row under Boot and runtime |
 
@@ -81,8 +82,9 @@ are the catalogue in `internal/adapters/inbound/http/errors.go`.
 
 - Only `POST /recommendations` is wrapped; `PUT` and `GET` never need a key.
 - A key with a stored answer replays that answer byte for byte, whatever its
-  status (2xx and 4xx are stored). A 5xx is never stored, so the same key can
-  retry real work.
+  status (2xx and 4xx are stored), and adds the response header
+  `Idempotency-Replayed: true` (a first execution never carries it). A 5xx is
+  never stored, so the same key can retry real work.
 - The middleware runs the handler inside the unit of work and rolls it back on
   a 4xx or 5xx; the 4xx answer is then stored on its own. Two concurrent
   requests with one new key both run, and the first to store wins; the loser
