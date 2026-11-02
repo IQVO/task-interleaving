@@ -184,7 +184,7 @@ func (w *world) completeTask() {
 	w.clock.set(at(12, 0, 0))
 	uc := &usecases.ApplyTaskCompleted{
 		Intake: w.intake(), TripWriter: w.writer(), Policies: w.policies, Pool: w.tasks,
-		Ranker: usecases.Ranker{Pool: w.tasks, Book: w.book}, Clock: w.clock, IDs: fixedHints{},
+		Ranker: usecases.NewRanker(w.tasks, w.book), Clock: w.clock, IDs: fixedHints{},
 	}
 	out, err := uc.Handle(context.Background(), "evt-completed", usecases.TaskCompletion{TaskID: "task-8a1f", At: at(12, 0, 0)})
 	if err != nil || out != usecases.OutcomeApplied {

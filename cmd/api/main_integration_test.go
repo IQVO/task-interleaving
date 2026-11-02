@@ -123,7 +123,7 @@ func bootPostgresWith(t *testing.T, wrap func(*adapters)) pgService {
 	if wrap != nil {
 		wrap(&ad)
 	}
-	srv := httptest.NewServer(inboundhttp.NewRouter(buildServer(ad, &inboundhttp.Readiness{})))
+	srv := httptest.NewServer(inboundhttp.NewRouter(buildServer(ad, &inboundhttp.Readiness{}, nil)))
 	t.Cleanup(srv.Close)
 	return pgService{srv: srv, ad: ad, count: func(table string) int { return pgtest.Count(t, pool, table) }}
 }

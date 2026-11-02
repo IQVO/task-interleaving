@@ -45,8 +45,8 @@ func (s *seqIDs) NewHintID() string { return fmt.Sprintf("hint-test-%03d", s.n.A
 
 var errDB = errors.New("db down")
 
-// repoConflict is the error a version-guarded save returns when it loses a race.
-var repoConflict = repository.ErrConcurrentModification
+// errRepoConflict is the error a version-guarded save returns when it loses a race.
+var errRepoConflict = repository.ErrConcurrentModification
 
 // equalJSON compares two decoded JSON values.
 func equalJSON(a, b any) bool { return reflect.DeepEqual(a, b) }
@@ -171,7 +171,7 @@ func newWorld() *world {
 	uow := memory.NewUnitOfWork(policies.PolicyRepo, trips.StationTripRepo, pool, book, events, processed)
 	intake := usecases.Intake{UoW: uow, Processed: processed}
 	writer := usecases.TripWriter{Trips: trips, Events: events}
-	ranker := usecases.Ranker{Pool: pool, Book: book}
+	ranker := usecases.NewRanker(pool, book)
 	return &world{
 		clock: clock, policies: policies, trips: trips, pool: pool, book: book, events: events, uow: uow,
 		store: &faultyStore{IdempotencyStore: memory.NewIdempotencyStore()},
@@ -184,7 +184,7 @@ func newWorld() *world {
 }
 
 func (w *world) server(idempotent bool) (*inboundhttp.Server, *inboundhttp.Readiness) {
-	ranker := usecases.Ranker{Pool: w.pool, Book: w.book}
+	ranker := usecases.NewRanker(w.pool, w.book)
 	readiness := &inboundhttp.Readiness{}
 	s := &inboundhttp.Server{
 		DeclarePolicy: &usecases.DeclarePolicy{Policies: w.policies, Events: w.events, UoW: w.uow, Clock: w.clock},

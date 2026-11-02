@@ -34,10 +34,10 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestLoadConfigNamesWhatIsMissing(t *testing.T) {
-	if _, err := loadConfig(env(map[string]string{"KAFKA_BROKERS": "a:9092"})); err != errMissingAnalyticsURL {
+	if _, err := loadConfig(env(map[string]string{"KAFKA_BROKERS": "a:9092"})); !errors.Is(err, errMissingAnalyticsURL) {
 		t.Fatalf("err = %v, want %v", err, errMissingAnalyticsURL)
 	}
-	if _, err := loadConfig(env(map[string]string{"ANALYTICS_DATABASE_URL": "postgres://x", "KAFKA_BROKERS": " , "})); err != errMissingBrokers {
+	if _, err := loadConfig(env(map[string]string{"ANALYTICS_DATABASE_URL": "postgres://x", "KAFKA_BROKERS": " , "})); !errors.Is(err, errMissingBrokers) {
 		t.Fatalf("err = %v, want %v", err, errMissingBrokers)
 	}
 }

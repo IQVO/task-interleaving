@@ -39,7 +39,7 @@ func seedWorld(t *testing.T) world {
 	ctx := context.Background()
 	w := world{
 		s: s, clock: &testClock{now: repocontract.T0.Add(time.Hour)}, ids: &seqIDs{},
-		ranker: usecases.Ranker{Pool: s.tasks, Book: s.book}, sink: &recordingSink{},
+		ranker: usecases.NewRanker(s.tasks, s.book), sink: &recordingSink{},
 	}
 	check(t, s.policies.Save(ctx, repository.PolicyRecord{Policy: repocontract.Policy(t, repocontract.Site), DeclaredAt: repocontract.T0}, 0))
 	check(t, s.book.SaveZone(ctx, repository.Zone{ID: "z1", SiteCode: "SITE-1", ZoneCode: "FWD"}))

@@ -153,7 +153,7 @@ func TestInvalidSiteIdsAreRejectedOnBothVerbs(t *testing.T) {
 func TestLosingARaceAtTheDatabaseIs409(t *testing.T) {
 	f := newFixture(t)
 	f.declare(t)
-	f.policies.saveFail.set(repoConflict)
+	f.policies.saveFail.set(errRepoConflict)
 	expectProblem(t, f.call(t, http.MethodPut, "/sites/SITE-1/policy", policyBody, "If-Match", `"1"`), http.StatusConflict, "concurrent-modification")
 }
 

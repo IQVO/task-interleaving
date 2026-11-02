@@ -19,10 +19,19 @@ var (
 	ErrInvalidMaxDetour  = errors.New("policy: max detour must be a finite number greater than 0")
 	ErrInvalidCandidates = errors.New("policy: max candidates must be between 1 and 5")
 	ErrInvalidHintTTL    = errors.New("policy: hint ttl must be greater than 0")
+	ErrHintTTLTooLarge   = errors.New("policy: hint ttl must be at most MaxHintTTLSeconds")
 	ErrInvalidTaskTypes  = errors.New("policy: eligible task types must be a non-empty set of known task types")
 	ErrInvalidWeight     = errors.New("policy: vertical weight must be a finite number of at least 0")
 	ErrInvalidVersion    = errors.New("policy: version must be at least 1")
 )
+
+// MaxHintTTLSeconds is the ceiling of a declared policy's hint TTL, in whole
+// seconds. The wire contract carries hintTtlSeconds as an int32
+// (apis/openapi.yaml), so EVERY inbound adapter that can declare or echo a
+// policy bounds it here -- the REST adapter's own check is a fast pre-parse
+// for its problem document, not the rule. The domain enforces it in
+// validate, so no driving adapter can smuggle a longer TTL past it.
+const MaxHintTTLSeconds int64 = 1<<31 - 1
 
 const (
 	maxTokenLen   = 64
@@ -133,6 +142,9 @@ func validate(s Settings) ([]TaskType, error) {
 	}
 	if s.HintTTL <= 0 {
 		return nil, ErrInvalidHintTTL
+	}
+	if s.HintTTL > time.Duration(MaxHintTTLSeconds)*time.Second {
+		return nil, ErrHintTTLTooLarge
 	}
 	if !finite(s.VerticalWeight) || s.VerticalWeight < 0 {
 		return nil, ErrInvalidWeight

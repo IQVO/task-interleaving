@@ -14,18 +14,38 @@ import (
 )
 
 // Ranker runs the pure recommender over the local copies: the AVAILABLE tasks
-// of the site and the geometry of their first locations. It reads only.
-type Ranker struct {
-	Pool ports.TaskPool
-	Book ports.LocationBook
+// of the site and the geometry of their first locations. It reads only. It is
+// an interface so the composition root can wrap the implementation
+// (telemetry.TimedRanker records the recommender latency); NewRanker builds
+// the concrete one.
+type Ranker interface {
+	// Origin resolves the place a station stands at: the current geometry of
+	// the location when the layout copy has it, else the recorded point. It
+	// also returns the site of the location's zone ("" while unknown). A
+	// decommissioned location keeps its geometry here: the operator stood
+	// there.
+	Origin(ctx context.Context, location string, recorded *travel.Point) (travel.Place, string, error)
+	// Rank returns the ranked candidates for a station standing at origin
+	// under the site's policy (recommend.Recommend); completed is the task
+	// just done, never recommended. recommend.ErrOriginUnknown comes back as
+	// is.
+	Rank(ctx context.Context, pol policy.Policy, origin travel.Place, completed recommend.TaskID) ([]recommend.Candidate, error)
 }
 
-// Origin resolves the place a station stands at: the current geometry of the
-// location when the layout copy has it, else the recorded point. It also
-// returns the site of the location's zone ("" while unknown). A decommissioned
-// location keeps its geometry here: the operator stood there.
-func (r Ranker) Origin(ctx context.Context, location string, recorded *travel.Point) (travel.Place, string, error) {
-	places, err := r.Book.Places(ctx, []string{location})
+// NewRanker builds the Ranker over the event-fed task pool and location book.
+func NewRanker(pool ports.TaskPool, book ports.LocationBook) Ranker {
+	return poolRanker{pool: pool, book: book}
+}
+
+// poolRanker is the Ranker implementation over the local copies.
+type poolRanker struct {
+	pool ports.TaskPool
+	book ports.LocationBook
+}
+
+// Origin implements Ranker.
+func (r poolRanker) Origin(ctx context.Context, location string, recorded *travel.Point) (travel.Place, string, error) {
+	places, err := r.book.Places(ctx, []string{location})
 	if err != nil {
 		return travel.Place{}, "", fmt.Errorf("read location: %w", err)
 	}
@@ -40,11 +60,9 @@ func (r Ranker) Origin(ctx context.Context, location string, recorded *travel.Po
 	return place, book.SiteCode, nil
 }
 
-// Rank returns the ranked candidates for a station standing at origin under
-// the site's policy (recommend.Recommend); completed is the task just done,
-// never recommended. recommend.ErrOriginUnknown comes back as is.
-func (r Ranker) Rank(ctx context.Context, pol policy.Policy, origin travel.Place, completed recommend.TaskID) ([]recommend.Candidate, error) {
-	tasks, err := r.Pool.Available(ctx, string(pol.SiteID()))
+// Rank implements Ranker.
+func (r poolRanker) Rank(ctx context.Context, pol policy.Policy, origin travel.Place, completed recommend.TaskID) ([]recommend.Candidate, error) {
+	tasks, err := r.pool.Available(ctx, string(pol.SiteID()))
 	if err != nil {
 		return nil, fmt.Errorf("read task pool: %w", err)
 	}
@@ -52,7 +70,7 @@ func (r Ranker) Rank(ctx context.Context, pol policy.Policy, origin travel.Place
 	for _, t := range tasks {
 		codes = append(codes, t.FromLocation)
 	}
-	places, err := r.Book.Places(ctx, codes)
+	places, err := r.book.Places(ctx, codes)
 	if err != nil {
 		return nil, fmt.Errorf("read locations: %w", err)
 	}

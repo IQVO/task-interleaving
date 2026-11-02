@@ -129,7 +129,7 @@ func seedThroughWriteUseCases(t *testing.T, url string) {
 	out, err := (&usecases.ApplyTaskCompleted{
 		Intake:     usecases.Intake{UoW: uow, Processed: processed},
 		TripWriter: usecases.TripWriter{Trips: trips, Events: sink},
-		Policies:   policies, Pool: taskPool, Ranker: usecases.Ranker{Pool: taskPool, Book: book},
+		Policies:   policies, Pool: taskPool, Ranker: usecases.NewRanker(taskPool, book),
 		Clock: system.Clock{}, IDs: fixedIDs{},
 	}).Handle(ctx, "evt-it-1", usecases.TaskCompletion{TaskID: "task-8a1f", At: time.Now()})
 	if err != nil || out != usecases.OutcomeApplied {
