@@ -12,10 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Bounds of the request schema (apis/openapi.yaml).
+// Bounds of the request schema (apis/openapi.yaml). The hint TTL ceiling is
+// the domain's policy.MaxHintTTLSeconds; the rest are parsing concerns of
+// this adapter only.
 const (
-	maxFromLocation   = 128
-	maxHintTTLSeconds = 1<<31 - 1
+	maxFromLocation = 128
 	// staleIfMatch is the version an If-Match that is not a version stands
 	// for: no policy ever has it, so the use case answers version-mismatch.
 	staleIfMatch int64 = -1
