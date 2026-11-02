@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"unicode"
 	"unicode/utf8"
@@ -32,18 +33,42 @@ func pathParam(r *http.Request, name string, invalid error) (string, error) {
 }
 
 // intParam reads an optional positive integer query parameter. Absent is
-// (0, nil); present but not a positive integer is invalid (the use case owns
-// the upper bound).
+// (0, nil); present but empty, repeated or not a positive integer is invalid
+// (the use case owns the upper bound). The first of several values never wins:
+// a request the contract calls invalid must not be accepted.
 func intParam(r *http.Request, name string, invalid error) (int, error) {
-	raw := r.URL.Query().Get(name)
-	if raw == "" {
+	vals, present := r.URL.Query()[name]
+	if !present {
 		return 0, nil
 	}
-	n, err := strconv.Atoi(raw)
+	if len(vals) != 1 || vals[0] == "" {
+		return 0, fmt.Errorf("%w: %s must be given once, as a positive integer", invalid, name)
+	}
+	n, err := strconv.Atoi(vals[0])
 	if err != nil || n < 1 {
 		return 0, fmt.Errorf("%w: %s must be a positive integer", invalid, name)
 	}
 	return n, nil
+}
+
+// unknownParam returns the first query parameter (in sorted order) that the
+// operation does not declare, or "" when every one is declared.
+func unknownParam(r *http.Request, declared ...string) string {
+	known := make(map[string]bool, len(declared))
+	for _, d := range declared {
+		known[d] = true
+	}
+	var unknown []string
+	for name := range r.URL.Query() {
+		if !known[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) == 0 {
+		return ""
+	}
+	sort.Strings(unknown)
+	return unknown[0]
 }
 
 // parseIfMatch reads If-Match, the policy version with or without double
