@@ -17,7 +17,7 @@ func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)
 
 // fakeStore is an in-memory relay.Store with the Drain contract of
 // postgres.OutboxRepo: id order, one send at a time, stop at the first failure
-// (recorded on the row and returned as an *outbox.SendFailure), rows at the
+// (recorded on the row and returned as an *outbox.SendFailureError), rows at the
 // attempt cap not claimed.
 type fakeStore struct {
 	mu   sync.Mutex
@@ -60,7 +60,7 @@ func (s *fakeStore) Drain(ctx context.Context, limit, maxAttempts int, send func
 		r.attempts++
 		if err := send(ctx, r.msg); err != nil {
 			r.lastErr = err.Error()
-			return published, &outbox.SendFailure{RowID: int64(i + 1), Message: r.msg, Attempts: r.attempts, Err: err}
+			return published, &outbox.SendFailureError{RowID: int64(i + 1), Message: r.msg, Attempts: r.attempts, Err: err}
 		}
 		r.published, r.lastErr = true, ""
 		published++

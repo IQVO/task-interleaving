@@ -147,6 +147,16 @@ func TestHintTTLBoundary(t *testing.T) {
 	}
 }
 
+func TestHintTTLCeiling(t *testing.T) {
+	ceiling := time.Duration(policy.MaxHintTTLSeconds) * time.Second
+	at := validSettings()
+	at.HintTTL = ceiling
+	expectSettings(t, at, true, nil)
+	over := validSettings()
+	over.HintTTL = ceiling + time.Second
+	expectSettings(t, over, false, policy.ErrHintTTLTooLarge)
+}
+
 func TestVerticalWeightBoundary(t *testing.T) {
 	cases := []struct {
 		name string

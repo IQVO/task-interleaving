@@ -67,7 +67,7 @@ func newHarness(t *testing.T) *harness {
 		declare: &usecases.DeclarePolicy{Policies: policies, Events: events, UoW: uow, Clock: fixedClock{}},
 		completed: &usecases.ApplyTaskCompleted{
 			Intake: intake, TripWriter: writer, Policies: policies, Pool: pool,
-			Ranker: usecases.Ranker{Pool: pool, Book: book}, Clock: fixedClock{}, IDs: &seqIDs{},
+			Ranker: usecases.NewRanker(pool, book), Clock: fixedClock{}, IDs: &seqIDs{},
 		},
 	}
 }

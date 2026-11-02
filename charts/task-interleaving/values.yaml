@@ -29,6 +29,20 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
+# OTel metrics of the api pod (internal/telemetry): the hint lifecycle
+# counters (issued / consumed / expired), the recommender latency and the
+# Kafka consumer lag. cmd/api wires the OTel Prometheus exporter on GET
+# /metrics of the http port (there is no separate metrics port); these values
+# only render the scrape annotations. Default off, additive, like every other
+# optional block here: warehouse-infra turns them on where a Prometheus
+# scrapes the cluster.
+metrics:
+  prometheus:
+    enabled: false
+    path: /metrics
+    # The POD port the scraper dials: the api container's httpPort (8080).
+    port: "8080"
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000

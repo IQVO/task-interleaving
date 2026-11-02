@@ -48,7 +48,7 @@ func saved(t *testing.T, r ports.StationTripRepo, trip *stationtrip.StationTrip,
 }
 
 func tripNotFound(t *testing.T, r ports.StationTripRepo) {
-	_, err := r.Get(bg, "STN-1")
+	_, err := r.Get(bg, stationOne)
 	wantErr(t, err, repository.ErrStationNotFound)
 }
 
@@ -63,15 +63,15 @@ func roundTrips(t *testing.T, r ports.StationTripRepo, trip *stationtrip.Station
 }
 
 func tripRoundTrip(t *testing.T, r ports.StationTripRepo) {
-	roundTrips(t, r, Hinted(t, "STN-1", "hint-1", T0))
+	roundTrips(t, r, Hinted(t, stationOne, hintOne, T0))
 }
 
 func tripEmptyRoundTrip(t *testing.T, r ports.StationTripRepo) {
-	roundTrips(t, r, EmptyTrip(t, "STN-1"))
+	roundTrips(t, r, EmptyTrip(t, stationOne))
 }
 
 func tripNoPointRoundTrip(t *testing.T, r ports.StationTripRepo) {
-	trip := EmptyTrip(t, "STN-1")
+	trip := EmptyTrip(t, stationOne)
 	pos := stationtrip.Position{Site: Site, Place: travel.Place{Location: "LOC-X"}}
 	changed, err := trip.RecordCompletion("task-0", T0, pos)
 	if err != nil || !changed {
@@ -81,7 +81,7 @@ func tripNoPointRoundTrip(t *testing.T, r ports.StationTripRepo) {
 }
 
 func tripConsumedRoundTrip(t *testing.T, r ports.StationTripRepo) {
-	trip := Hinted(t, "STN-1", "hint-1", T0)
+	trip := Hinted(t, stationOne, hintOne, T0)
 	if !trip.RecordClaim("task-b", T0.Add(10*time.Second)) {
 		t.Fatal("the claim should consume the hint")
 	}
@@ -89,27 +89,27 @@ func tripConsumedRoundTrip(t *testing.T, r ports.StationTripRepo) {
 }
 
 func tripInsertTwice(t *testing.T, r ports.StationTripRepo) {
-	trip := Hinted(t, "STN-1", "hint-1", T0)
+	trip := Hinted(t, stationOne, hintOne, T0)
 	saved(t, r, trip, 0)
 	wantErr(t, r.Save(bg, trip, 0), repository.ErrConcurrentModification)
-	wantErr(t, r.Save(bg, Hinted(t, "STN-1", "hint-2", T0), 0), repository.ErrConcurrentModification)
-	if rec, err := r.GetHint(bg, "hint-1"); err != nil || rec.Hint.State != stationtrip.StateActive {
+	wantErr(t, r.Save(bg, Hinted(t, stationOne, hintTwo, T0), 0), repository.ErrConcurrentModification)
+	if rec, err := r.GetHint(bg, hintOne); err != nil || rec.Hint.State != stationtrip.StateActive {
 		t.Fatalf("the losing insert changed the history: %+v %v", rec, err)
 	}
-	if _, err := r.GetHint(bg, "hint-2"); err == nil {
+	if _, err := r.GetHint(bg, hintTwo); err == nil {
 		t.Fatal("the losing insert left its hint behind")
 	}
 }
 
 func tripUpdateGuard(t *testing.T, r ports.StationTripRepo) {
-	trip := Hinted(t, "STN-1", "hint-1", T0)
+	trip := Hinted(t, stationOne, hintOne, T0)
 	saved(t, r, trip, 0)
 	loaded := trip.Version()
 	Complete(t, trip, "task-1", "LOC-1", T0.Add(time.Minute))
 	wantErr(t, r.Save(bg, trip, loaded+5), repository.ErrConcurrentModification)
 	wantErr(t, r.Save(bg, Hinted(t, "STN-9", "hint-9", T0), 1), repository.ErrConcurrentModification)
 	saved(t, r, trip, loaded)
-	got, err := r.Get(bg, "STN-1")
+	got, err := r.Get(bg, stationOne)
 	must(t, err)
 	if !sameTrip(got, trip) {
 		t.Fatalf("after update: %+v, want %+v", got.Snapshot(), trip.Snapshot())
@@ -119,31 +119,31 @@ func tripUpdateGuard(t *testing.T, r ports.StationTripRepo) {
 }
 
 func tripNoSharing(t *testing.T, r ports.StationTripRepo) {
-	trip := Hinted(t, "STN-1", "hint-1", T0)
+	trip := Hinted(t, stationOne, hintOne, T0)
 	saved(t, r, trip, 0)
 	trip.Expire(T0.Add(time.Hour))
-	got, err := r.Get(bg, "STN-1")
+	got, err := r.Get(bg, stationOne)
 	must(t, err)
 	if _, active := got.ActiveHint(); !active {
 		t.Fatal("a change to the live aggregate leaked into the store")
 	}
 	got.Expire(T0.Add(time.Hour))
-	again, _ := r.Get(bg, "STN-1")
+	again, _ := r.Get(bg, stationOne)
 	if _, active := again.ActiveHint(); !active {
 		t.Fatal("a change to a loaded aggregate leaked into the store")
 	}
 }
 
 func tripsIndependent(t *testing.T, r ports.StationTripRepo) {
-	saved(t, r, Hinted(t, "STN-1", "hint-1", T0), 0)
-	saved(t, r, Hinted(t, "STN-2", "hint-2", T0), 0)
-	a, err := r.Get(bg, "STN-1")
+	saved(t, r, Hinted(t, stationOne, hintOne, T0), 0)
+	saved(t, r, Hinted(t, "STN-2", hintTwo, T0), 0)
+	a, err := r.Get(bg, stationOne)
 	must(t, err)
 	b, err := r.Get(bg, "STN-2")
 	must(t, err)
 	ha, _ := a.Hint()
 	hb, _ := b.Hint()
-	if ha.ID != "hint-1" || hb.ID != "hint-2" {
+	if ha.ID != hintOne || hb.ID != hintTwo {
 		t.Fatalf("hints = %s %s", ha.ID, hb.ID)
 	}
 	// two Active hints, one per station

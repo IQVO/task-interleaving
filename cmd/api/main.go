@@ -48,6 +48,7 @@ import (
 
 	inboundhttp "github.com/claudioed/task-interleaving/internal/adapters/inbound/http"
 	outboundkafka "github.com/claudioed/task-interleaving/internal/adapters/outbound/kafka"
+	"github.com/claudioed/task-interleaving/internal/telemetry"
 )
 
 // shutdownTimeout bounds the HTTP server's graceful drain.
@@ -88,9 +89,13 @@ func run(ctx context.Context) error {
 	logTopics(logger, cfg.brokers)
 
 	readiness := buildReadiness(ad, outboundkafka.NewBrokerCheck(cfg.brokers).Check)
+	metrics, err := telemetry.PrometheusMetrics()
+	if err != nil {
+		return err
+	}
 	httpServer := &http.Server{
 		Addr:              getenv("HTTP_ADDR", ":8080"),
-		Handler:           inboundhttp.NewRouter(buildServer(ad, readiness)),
+		Handler:           inboundhttp.NewRouter(buildServer(ad, readiness, metrics)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	// Stop order: the consumers go first (they enqueue outbox rows while they

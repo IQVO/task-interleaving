@@ -87,7 +87,7 @@ func newEnv() *env {
 	}
 	e.intake = usecases.Intake{UoW: e.uow, Processed: e.processed}
 	e.writer = usecases.TripWriter{Trips: e.trips, Events: e.events}
-	e.ranker = usecases.Ranker{Pool: e.pool, Book: e.book}
+	e.ranker = usecases.NewRanker(e.pool, e.book)
 	return e
 }
 

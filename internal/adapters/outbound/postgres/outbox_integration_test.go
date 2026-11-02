@@ -56,7 +56,7 @@ func TestOutboxFailedRowIsRetriedAndIdentityIsUnique(t *testing.T) {
 	}
 	boom := errors.New("broker down")
 	n, err := ob.Drain(ctx, 10, 0, func(context.Context, outbox.Message) error { return boom })
-	var failure *outbox.SendFailure
+	var failure *outbox.SendFailureError
 	if !errors.Is(err, boom) || !errors.As(err, &failure) || failure.Attempts != 1 || n != 0 {
 		t.Fatalf("failure: n=%d err=%v", n, err)
 	}
@@ -110,7 +110,7 @@ func TestOutboxAttemptCapExcludesTheRowButKeepsItForInspection(t *testing.T) {
 	const maxAttempts = 2
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		_, err := ob.Drain(ctx, 10, maxAttempts, rejectPoison)
-		var failure *outbox.SendFailure
+		var failure *outbox.SendFailureError
 		if !errors.As(err, &failure) || failure.Attempts != attempt {
 			t.Fatalf("attempt %d: err=%v", attempt, err)
 		}
