@@ -240,7 +240,11 @@ binary reads is the env the chart renders), `test_service_selectors.py` and
 (`get_site_policy`, `list_hints`, `get_hint`, `get_station`) over the
 existing queries, no write tool, no Kafka — served over Streamable HTTP at
 `/mcp`. `GET /healthz` backs the probes; there is no authentication layer in
-front of it.
+front of it. Every tool declares authority `L1` (`_meta`
+`com.warehouse/authority`, Agentic Standard v2), the transport is stateless
+(2026-07-28 `server/discover` plus legacy `initialize`), and the surface
+carries one resource (`warehouse://task-interleaving/policies/{siteId}`) and
+one prompt (`advise_next_task`) — [ADR 0011](docs/adr/0011-agent-authority-levels-and-complete-mcp-surface.md).
 
 ### Running the A2A agent in Kubernetes
 
@@ -248,8 +252,9 @@ front of it.
 (ADR 0009). Read-only JSON-RPC over HTTP at `/` and `/a2a`, Agent Card at
 `/.well-known/agent-card.json`, two goal-shaped read skills
 (`station_hint_status`, `site_interleaving_overview`) over the same read use
-cases as REST and MCP; no write skill, no Kafka. `A2A_AGENT_URL` is
-mandatory.
+cases as REST and MCP; both declare `authority:L1` on the card (Agentic
+Standard v2, [ADR 0011](docs/adr/0011-agent-authority-levels-and-complete-mcp-surface.md));
+no write skill, no Kafka. `A2A_AGENT_URL` is mandatory.
 
 ---
 
