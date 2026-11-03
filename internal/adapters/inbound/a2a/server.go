@@ -87,7 +87,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillStationHintStatus,
 				Name:        "Interleaving hint status of a station",
 				Description: "Read where one station stands and what it should take next: its site, its position (location code and the point in metres when the geometry is known), the last task it completed and when, and the hint it currently holds, if any, with its ranked candidate tasks (rank, taskId, taskType, location, detourM). Advisory only: a hint never assigns or claims a task. A station that never recorded a completion is answered as station-not-found (404).",
-				Tags:        []string{"interleaving", "station", "hint", "read"},
+				Tags:        []string{"interleaving", "station", "hint", "read", "authority:L1"},
 				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"station_hint_status","arguments":{"stationId":"STN-07"}}`,
@@ -97,7 +97,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillSiteInterleavingOverview,
 				Name:        "Interleaving overview of a site",
 				Description: "Read how interleaving is set up and behaving at one site: the policy the site declared (maxDetourM, maxCandidates, hintTtlSeconds, eligibleTaskTypes, verticalWeight, version, declaredAt) and its most recent hints, newest first, with how each ended (Active, Consumed, Expired or Superseded) and a count per state. limit (optional, 1..20, default 5) sizes the recent-hint window. A site that never declared a policy is inert (no hint is ever issued for it) and is answered as policy-not-found (404).",
-				Tags:        []string{"interleaving", "site", "policy", "read"},
+				Tags:        []string{"interleaving", "site", "policy", "read", "authority:L1"},
 				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"site_interleaving_overview","arguments":{"siteId":"SITE-1"}}`,

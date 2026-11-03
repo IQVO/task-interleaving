@@ -243,11 +243,13 @@ func (d Deps) getStation(ctx context.Context, in stationInput) (stationView, err
 // --- registry -----------------------------------------------------------------
 
 // registerTools adds the four read-only tools. Every tool is annotated
-// read-only, idempotent and closed-world; TestToolSurface pins the set and
-// fails the build on any write-verb name (docs/adr/0007).
+// read-only, idempotent and closed-world (the literal is inlined per tool so
+// the fleet's static authority sensor can prove ReadOnlyHint), and every tool
+// declares its authority level in Meta (Agentic Standard v2, AS-1: a pure read
+// of this context's own state is L1). TestToolSurface pins the set and fails
+// the build on any write-verb name (docs/adr/0007).
 func (d Deps) registerTools(server *mcp.Server) {
 	closedWorld := false
-	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld}
 
 	addTool(server, &mcp.Tool{
 		Name: "get_site_policy",
@@ -255,7 +257,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"station), maxCandidates (1..5), hintTtlSeconds, eligibleTaskTypes, verticalWeight, version and declaredAt. " +
 			"A site that never declared a policy is inert (no hint is ever issued for it) and fails with policy-not-found. " +
 			"Read-only; a malformed site fails with invalid-site-id.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getSitePolicy)
 
 	addTool(server, &mcp.Tool{
@@ -266,7 +269,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"returned nextCursor to get the next page; it is absent on the last page. Read-only; a bad limit fails with " +
 			"invalid-limit, a bad cursor with invalid-cursor, an unknown state with invalid-state and a malformed " +
 			"station or site with invalid-station-id or invalid-site-id.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.listHints)
 
 	addTool(server, &mcp.Tool{
@@ -275,7 +279,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"the task it follows (afterTaskId) and the origin location, issuedAt and expiresAt, the policyVersion it was " +
 			"ranked under, its ranked candidates, and consumedTaskId/consumedAt or supersededAt once it ended. Read-only; " +
 			"fails with hint-not-found for an unknown id and invalid-hint-id for a malformed one.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getHint)
 
 	addTool(server, &mcp.Tool{
@@ -284,7 +289,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"metres when the geometry is known), the last task it completed and when, and its active hint if it holds " +
 			"one (the short form: hintId, state, issuedAt, expiresAt, policyVersion, candidates). Read-only; fails with " +
 			"station-not-found when no completion was recorded for the station and invalid-station-id for a malformed id.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getStation)
 }
 
