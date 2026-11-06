@@ -68,6 +68,17 @@ is recorded as completed and ignored (outcome `ignored`). The policy's other
 eligible task types (`PICK`, `PACK`, `REBIN`, `SLAM`) have no effect until the
 producer announces them.
 
+**PICK readiness (ADR 0012).** The consumer side of that gap is closed and
+proven: `PICK` has always been in the consumed `task_type` enum, and an
+announced PICK task is stored and ranked exactly like a RELOCATE or REPLENISH
+one — type parity, survival of the per-site `maxCandidates` bound (1..5, which
+fits the batching default of 4), and the PICK-scale pool envelope are tested
+invariants (the last via the tagged `make load` suite, outside CI). The only
+open half is the producer's announcement scope, being closed by
+fulfillment-execution's pick-placement change: when it lands, announced PICK
+tasks flow through this context with zero change
+([ADR 0012](/docs/adr/0012-pick-a-first-class-interleaving-candidate)).
+
 **Status since the ADRs.** ADR 0001, ADR 0003 and ADR 0004 (bodies unchanged, they
 are immutable) mark the consumed `TaskAvailable` and `TaskClaimed` rows as
 "pending producer change P2". That is no longer true: both are published by
