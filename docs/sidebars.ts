@@ -136,6 +136,11 @@ const sidebars: SidebarsConfig = {
           label: '0011 Agent authority levels and complete MCP surface',
           href: '/docs/adr/0011-agent-authority-levels-and-complete-mcp-surface',
         },
+        {
+          type: 'link',
+          label: '0012 PICK is a first-class interleaving candidate',
+          href: '/docs/adr/0012-pick-a-first-class-interleaving-candidate',
+        },
       ],
     },
   ],

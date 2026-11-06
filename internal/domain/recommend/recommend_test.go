@@ -2,6 +2,7 @@ package recommend_test
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -309,6 +310,80 @@ func TestRectilinearForUsesThePolicyWeight(t *testing.T) {
 	}
 	if recommend.RectilinearFor(p).Name() != travel.RectilinearV1 {
 		t.Fatal("v1 model expected")
+	}
+}
+
+// TestRecommendRanksPICKAgainstRelocateAndReplenishByDetourOnly proves PICK is
+// a first-class candidate: with every floor type eligible, the ranking mixes
+// the types by detour (then task id) and nothing else — no type is preferred,
+// sorted or grouped, and a PICK ties with a REPLENISH exactly by task id.
+func TestRecommendRanksPICKAgainstRelocateAndReplenishByDetourOnly(t *testing.T) {
+	p, err := policy.New(site, policy.Settings{
+		MaxDetourM: 20, MaxCandidates: 5, HintTTL: time.Minute,
+		EligibleTaskTypes: []policy.TaskType{policy.TaskPick, policy.TaskRelocate, policy.TaskReplenish},
+		VerticalWeight:    2,
+	})
+	if err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	pool := []recommend.OpenTask{
+		task("d-relocate", policy.TaskRelocate, 13, 10, 1),   // detour 3
+		task("a-pick", policy.TaskPick, 12, 10, 1),           // detour 2
+		task("e-replenish", policy.TaskReplenish, 16, 10, 1), // detour 6
+		task("c-replenish", policy.TaskReplenish, 13, 10, 1), // detour 3, tie with d-relocate
+		task("b-pick", policy.TaskPick, 15, 10, 1),           // detour 5
+	}
+	got := run(t, recommend.Input{
+		Site: site, Origin: origin(), Pool: pool, Policy: p,
+		Completed: "done", Model: recommend.RectilinearFor(p),
+	})
+	want := []struct {
+		id  recommend.TaskID
+		typ policy.TaskType
+		d   float64
+	}{
+		{"a-pick", policy.TaskPick, 2},
+		{"c-replenish", policy.TaskReplenish, 3},
+		{"d-relocate", policy.TaskRelocate, 3},
+		{"b-pick", policy.TaskPick, 5},
+		{"e-replenish", policy.TaskReplenish, 6},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d candidates, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		c := got[i]
+		if c.Rank != i+1 || c.TaskID != w.id || c.TaskType != w.typ || c.DetourM != w.d {
+			t.Fatalf("candidate %d = %+v, want rank %d %s %s %.1f (interleaved by detour, tie by id)", i, c, i+1, w.id, w.typ, w.d)
+		}
+	}
+}
+
+// TestRecommendKeepsEveryCandidateUpToTheMaxCandidatesBound locks the policy
+// bound itself: with seven qualifying tasks, maxCandidates=5 keeps five and
+// maxCandidates=4 (the pick-batching default maximum) keeps four — no
+// ordering or pruning step drops a candidate below the declared bound.
+func TestRecommendKeepsEveryCandidateUpToTheMaxCandidatesBound(t *testing.T) {
+	pool := make([]recommend.OpenTask, 0, 7)
+	for i := 1; i <= 7; i++ {
+		pool = append(pool, task(fmt.Sprintf("t%d", i), policy.TaskPick, float64(10+i), 10, 1)) // detour i
+	}
+	base := input(t, pool...)
+	base.Policy = testPolicy(t, 20, 5, 2)
+	base.Model = recommend.RectilinearFor(base.Policy)
+	got := run(t, base)
+	if len(got) != 5 {
+		t.Fatalf("maxCandidates 5: got %d candidates, want the full 5: %+v", len(got), got)
+	}
+	for i, c := range got {
+		if c.Rank != i+1 || c.TaskID != recommend.TaskID(fmt.Sprintf("t%d", i+1)) {
+			t.Fatalf("maxCandidates 5: candidate %d = %+v, want rank %d t%d", i, c, i+1, i+1)
+		}
+	}
+	base.Policy = testPolicy(t, 20, 4, 2)
+	base.Model = recommend.RectilinearFor(base.Policy)
+	if got := run(t, base); len(got) != 4 || got[3].TaskID != "t4" {
+		t.Fatalf("maxCandidates 4: got %+v, want the four nearest", got)
 	}
 }
 
