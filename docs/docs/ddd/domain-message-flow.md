@@ -13,8 +13,8 @@ collaborators. Every collaborator is code on `develop`: the domain steps
 (`policy`, `recommend`, `stationtrip`), the use cases, the REST handlers, the
 consumers, the expiry worker and the outbox relay. On the sibling side,
 fulfillment-execution publishes the events of flows 2 and 3 (`TaskAvailable` only
-for RELOCATE and REPLENISH tasks), and nothing in it consumes the hint published at the end of
-flow 2.
+for RELOCATE and REPLENISH tasks), and it consumes the hint published at the end of
+flow 2 (its ADR 0051, consumer built on its `origin/develop`).
 
 ## Flow 1 — declare a policy
 

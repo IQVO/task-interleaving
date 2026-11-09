@@ -38,9 +38,24 @@ analytical database, [ADR 0008](/docs/adr/0008-analytics-read-side)) and the
 
 Packaged: a `Dockerfile` that builds every `cmd/*`, a web image and the Helm chart
 `charts/task-interleaving` (optional mcp, a2a, analytics and frontend components, off
-by default). Not built: any OpenTelemetry metric or trace, a `warehouse-infra`
-entry, the shell's entry for the remote in `warehouse-console` and a consumer of
-the hint in fulfillment-execution.
+by default).
+
+Instrumented: `cmd/api` registers five OpenTelemetry metrics (three hint
+lifecycle counters, a recommender-duration histogram and a Kafka consumer-lag
+histogram) and serves them on `GET /metrics` through the OTel Prometheus
+exporter; the A2A adapter starts one OpenTelemetry span per skill call, but no
+binary installs a tracer provider, so no span is recorded or exported
+([Observability](/docs/operations/observability)).
+
+Wired around it (read on each repository's `origin/develop`, 2026-11-09):
+`warehouse-infra` registers the service in `terraform/apps.yaml` (database,
+analytics secret and the `task_interleaving_mfe` web remote) and switches on its
+mcp, a2a, analytics and frontend components in `helm-values/task-interleaving.yaml`;
+`warehouse-console` registers the remote and a Hint Adoption report; and
+fulfillment-execution consumes `InterleavingHintIssued`. Whether the cluster
+currently runs any of it is not verified here. Not wired: the infra values file
+does not set `metrics.prometheus.enabled`, so the chart renders no pod scrape
+annotations for `/metrics`.
 The [Runbook](/docs/operations/runbook#deployment) and
 [Integration](/docs/ecosystem/integration) pages say exactly where each edge stands.
 :::
