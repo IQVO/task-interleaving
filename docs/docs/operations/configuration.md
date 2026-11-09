@@ -106,7 +106,10 @@ These are constants in the source; changing them needs a code change.
 ## What is deliberately absent
 
 - **No OpenTelemetry or metrics variables.** The binary reads no `OTEL_*`
-  variable and starts no exporter; see [Observability](/docs/operations/observability).
+  variable and no variable switches metrics on or off: `cmd/api` always installs
+  the OTel Prometheus exporter and serves it on `GET /metrics` of `HTTP_ADDR`
+  (no separate port); no tracer provider is installed. See
+  [Observability](/docs/operations/observability).
 - **No auth variables.** REST is unauthenticated fleet-wide;
   `TestNoAuthMiddlewareReintroduced` fails the build if a bearer or JWT check
   appears under `internal/adapters/inbound`.

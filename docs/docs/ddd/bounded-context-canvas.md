@@ -67,7 +67,7 @@ flowchart LR
     BC["<b>task-interleaving - Supporting subdomain - WES tier</b>"]:::bc
     subgraph OUT["Outbound - whom it notifies"]
         direction TB
-        out0["fulfillment-execution<br/>(tie-break inside one priority band;<br/>no consumer yet)"]:::none
+        out0["fulfillment-execution<br/>(tie-break inside one priority band;<br/>consumer built, its ADR 0051)"]:::ctx
         out1["own analytics side<br/>(ti-projector, ADR 0008)"]:::self
     end
     BC ==>|"evt - Kafka<br/>warehouse.task-interleaving.events<br/>InterleavingHintIssued"| out0
@@ -175,10 +175,9 @@ From ADR 0001 and ADR 0003:
 
 - When does fulfillment-execution announce `TaskAvailable` for the task types it
   does not announce today (PICK, PACK, SLAM, REBIN: they carry no location there),
-  and when does it consume `InterleavingHintIssued`? Until the first, the pool
-  holds RELOCATE and REPLENISH tasks only; until the second, hints are published and
-  observable only (ADR 0001; out of scope in fulfillment-execution's ADR 0049 and
-  ADR 0050).
+  Until it does, the pool holds RELOCATE and REPLENISH tasks only. (It consumes
+  `InterleavingHintIssued` since its ADR 0051, which ADR 0049 and ADR 0050 of
+  that context had left out of scope.)
 - Expiry is triggered by the hint-expiry worker (`HINT_EXPIRY_INTERVAL`); no ADR names
   it, so a future ADR should record the interval as a decision.
 - Do the pool's `site_id` values equal the facility `siteCode` values, what share of

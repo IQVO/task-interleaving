@@ -39,6 +39,11 @@ the real Postgres and Kafka runtime, with no in-memory mode.
   binary stops its workers one after the other, each bounded by 10 s
   (`SHUTDOWN_DRAIN_DELAY` 5 s + HTTP 10 s + two consumers + the expiry worker + the
   relay).
+- **Metrics.** `metrics.prometheus.enabled` (default `false`) adds the pod
+  annotations `prometheus.io/scrape`, `prometheus.io/path` (`metrics.prometheus.path`,
+  default `/metrics`) and `prometheus.io/port` (`metrics.prometheus.port`, default
+  `8080`, the api container's HTTP port) for `GET /metrics`
+  ([Observability](/docs/operations/observability#metrics)).
 - **Gateway.** The HPA, the `HTTPRoute` (prefix `/api/task-interleaving`,
   stripped before the service) and the Kong plugins (`cors` allowing
   `Idempotency-Key`, `prometheus`, `opentelemetry`; never an auth plugin) are
@@ -51,10 +56,14 @@ the real Postgres and Kafka runtime, with no in-memory mode.
 - `.github/workflows/ci.yml`: `docker-publish` builds this `Dockerfile` and
   pushes `ghcr.io/iqvo/task-interleaving`, `release` packages
   `charts/task-interleaving`. Both run only on a push to `main`.
-- `warehouse-infra` (`origin/develop`, 2026-10-17) has no reference to
-  `task-interleaving` in its Terraform, so no Kong route, ArgoCD application or
-  dashboard exists for it, and no values file of that repository sets the chart
-  values yet. The `docker-compose.yml` at the root only serves `make run-local`
+- `warehouse-infra` (`origin/develop`, read 2026-11-09) registers the service in
+  `terraform/apps.yaml` and sets the chart values in
+  `helm-values/task-interleaving.yaml` (consumer groups, `analytics`, `frontend`,
+  `gatewayApi`, `mcp`, `a2a` and the `cors`, `opentelemetry` and `prometheus` Kong
+  plugins); a dashboard and alert rules exist for it. That file sets no
+  `metrics.prometheus` value, so the pod scrape annotations stay off. Whether the
+  cluster runs these releases is not verified here; see
+  [Integration](/docs/ecosystem/integration#infrastructure-wiring). The `docker-compose.yml` at the root only serves `make run-local`
   (a throwaway Postgres, Kafka and a job that pre-creates the four topics locally; see the
   README note that it is not verified end to end).
 

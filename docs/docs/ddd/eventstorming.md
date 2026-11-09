@@ -51,7 +51,7 @@ flowchart LR
     e8(["HintExpired (wire: InterleavingHintExpired)"]):::event
     h1{{"RESOLVED: the expiry worker calls Expire"}}:::hot
     h2{{"HOTSPOT: no candidate leaves an old hint Active until its TTL"}}:::hot
-    h3{{"HOTSPOT: PICK, PACK, SLAM and REBIN tasks are not announced, and nobody consumes the hint"}}:::hot
+    h3{{"HOTSPOT: PICK, PACK, SLAM and REBIN tasks are not announced"}}:::hot
 
     opr --> c1 --> a1 --> e1
     fl --> e5 --> r1
@@ -95,6 +95,6 @@ ADR 0004.
 | --- | --- | --- |
 | 1 | **Who calls `Expire`?** The `ExpireHints` use case, driven by the `inbound/expiry` worker every `HINT_EXPIRY_INTERVAL` (default 5 s). The aggregate still takes the instant from the caller. | Resolved in code (ADR text still silent) |
 | 2 | **A completion with no candidate leaves an older Active hint in place** until its TTL (bounded staleness; the hint is advisory and fail-open). Retracting it would need an event for the retraction: a later ADR if the floor needs it (ADR 0002). | Accepted by ADR 0002 |
-| 3 | **Announcement scope and the hint consumer.** fulfillment-execution publishes `TaskAvailable` only for RELOCATE and REPLENISH tasks (its ADR 0049 and ADR 0050), so the pool, and every candidate list, holds those two types only; PICK, PACK, SLAM and REBIN have no location there. And nothing in fulfillment-execution consumes `InterleavingHintIssued` (out of scope in both ADRs), so hints are published and acted on by nobody (ADR 0001). | Open, other contexts |
+| 3 | **Announcement scope and the hint consumer.** fulfillment-execution publishes `TaskAvailable` only for RELOCATE and REPLENISH tasks (its ADR 0049 and ADR 0050), so the pool, and every candidate list, holds those two types only; PICK, PACK, SLAM and REBIN have no location there. fulfillment-execution consumes `InterleavingHintIssued` since its ADR 0051 (both earlier ADRs had left it out of scope), so a hint can break a tie inside one priority band (ADR 0001). | Announcement scope open, other contexts; hint consumer resolved |
 | 4 | **Site and geometry code spaces.** v1 assumes the pool's `site_id` equals facility-layout's `siteCode` and one geometry frame per site (ADR 0003, live-data rule). | Open until checked on live data |
 | 5 | **Wording drift in the REST spec.** `apis/openapi.yaml` says a hint is `Superseded` by "a newer completion at the same station" and mentions `supersededAt`; ADR 0002 and the code supersede a hint only when a newer hint is issued (a completion with no candidate supersedes nothing). The code does keep `supersededAt` (`hints.superseded_at`), so only the "newer completion" wording differs. | Reported as a discrepancy |
