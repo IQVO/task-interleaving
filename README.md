@@ -98,7 +98,7 @@ processed-event de-duplication; ADR 0003):
 
 | Topic | Messages | Consumer group |
 |---|---|---|
-| `warehouse.fulfillment.events` | `TaskAvailable`, `TaskClaimed`, `TaskCompleted` (`com.warehouse.wes.fulfillment-execution.task.*`) — `TaskAvailable` only for RELOCATE and REPLENISH tasks (producer ADR 0050); every other type ignored | `FULFILLMENT_CONSUMER_GROUP` |
+| `warehouse.fulfillment.events` | `TaskAvailable`, `TaskClaimed`, `TaskCompleted` (`com.warehouse.wes.fulfillment-execution.task.*`) — `TaskAvailable` for RELOCATE, REPLENISH and sited PICK tasks (producer ADRs 0049, 0050, 0062); PACK, SLAM and REBIN are not announced; every other type ignored | `FULFILLMENT_CONSUMER_GROUP` |
 | `warehouse.facility.events` | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` (`com.warehouse.wms.facility-layout.…`) — the local geometry copy; every other type ignored | `LAYOUT_CONSUMER_GROUP` |
 
 Contracts are pinned in `apis/asyncapi.yaml` (consumer-first, ADR 0003).
@@ -224,7 +224,10 @@ both the integration topic and `warehouse.task-interleaving.analytics`;
 `:8091`, dead-letters unappliable messages to
 `warehouse.task-interleaving.analytics.dlq`); `cmd/ti-reports` serves the
 read-only report side on `:8092` (`GET /reports/hint-adoption`,
-`GET /reports/freshness`).
+`GET /reports/freshness`). It is in-cluster only: the chart renders no Kong
+route for it and the live cluster has no `task-interleaving-reports`
+`HTTPRoute`, so `/api/task-interleaving/reports/...` does not reach it
+(see [Integration](docs/docs/ecosystem/integration.md)).
 
 ---
 

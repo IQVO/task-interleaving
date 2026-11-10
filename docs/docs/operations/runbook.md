@@ -343,7 +343,10 @@ The declaration enqueues `InterleavingPolicyDeclared` (analytics). A stale
 `warehouse.task-interleaving.analytics` into the analytical database
 (`ANALYTICS_DATABASE_URL`, separate from `DATABASE_URL`) and `cmd/ti-reports`
 serves `GET /reports/hint-adoption` and `GET /reports/freshness` from it
-(in-cluster, port 8092). Enable both with `analytics.enabled=true` plus
+(in-cluster only, port 8092: the chart has no reports route and the live
+cluster has no `task-interleaving-reports` `HTTPRoute`, so Kong does not publish
+them; reach them with `kubectl port-forward` to the Service
+`task-interleaving-analytics-reports`). Enable both with `analytics.enabled=true` plus
 `analytics.url` or `analytics.existingSecret`. The projector reuses
 `kafka.brokers`, uses the stable group `task-interleaving-analytics` and exits
 non-zero if its consumer stops, so a stuck projector restarts instead of

@@ -53,7 +53,7 @@ flowchart LR
     class BC bc
 ```
 
-`*` published by fulfillment-execution for RELOCATE and REPLENISH tasks only.
+`*` published by fulfillment-execution for RELOCATE, REPLENISH and sited PICK tasks (PACK, SLAM and REBIN are not announced).
 
 ### Outbound
 
@@ -112,7 +112,7 @@ may use as a tie-break inside one priority band.
 | Collaborator | Message | Kind | Channel | Status |
 | --- | --- | --- | --- | --- |
 | fulfillment-execution | `TaskCompleted` | event | `warehouse.fulfillment.events` | producer verified; consumer built (always on) |
-| fulfillment-execution | `TaskAvailable` (RELOCATE and REPLENISH tasks only), `TaskClaimed` (every task type) | events | `warehouse.fulfillment.events` | producer verified (its ADR 0049 and ADR 0050); consumer built |
+| fulfillment-execution | `TaskAvailable` (RELOCATE, REPLENISH and sited PICK tasks), `TaskClaimed` (every task type) | events | `warehouse.fulfillment.events` | producer verified (its ADR 0049, ADR 0050 and ADR 0062); consumer built; PICK-ready on this side (ADR 0012) |
 | facility-layout | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` | events | `warehouse.facility.events` | producer verified; consumer built (always on) |
 | operator (console, agent) | Declare policy | command | `PUT /sites/{siteId}/policy` | built |
 | operator (console, agent) | Get policy, list hints, get hint, get station, simulate | queries | `GET /sites/{siteId}/policy`, `GET /hints`, `GET /hints/{hintId}`, `GET /stations/{stationId}`, `POST /recommendations` | built |
@@ -173,9 +173,12 @@ From ADR 0001 and ADR 0003:
 
 ## Open questions
 
-- When does fulfillment-execution announce `TaskAvailable` for the task types it
-  does not announce today (PICK, PACK, SLAM, REBIN: they carry no location there),
-  Until it does, the pool holds RELOCATE and REPLENISH tasks only. (It consumes
+- When does fulfillment-execution announce `TaskAvailable` for PACK, SLAM and REBIN
+  tasks? They carry no location there, so today the pool holds RELOCATE, REPLENISH and
+  sited PICK tasks only (a PICK is announced only when its plan carries both the
+  site and the pick face, producer ADR 0062; the pick face stands for both ends of
+  the trip). The consumer side of PICK needed no change: PICK parity, the candidate
+  bound and the pool-size envelope are tested (ADR 0012). (It consumes
   `InterleavingHintIssued` since its ADR 0051, which ADR 0049 and ADR 0050 of
   that context had left out of scope.)
 - Expiry is triggered by the hint-expiry worker (`HINT_EXPIRY_INTERVAL`); no ADR names

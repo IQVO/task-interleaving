@@ -83,7 +83,7 @@ stay ordered on one partition (ADR 0004; `events.Sink` sets the key).
 | 2 | `MaxDetourM` is finite and greater than 0 | `ErrInvalidMaxDetour` |
 | 3 | `MaxCandidates` is between 1 and 5 | `ErrInvalidCandidates` |
 | 4 | `HintTTL` is greater than 0 | `ErrInvalidHintTTL` |
-| 5 | `EligibleTaskTypes` is a non-empty set of known types; duplicates collapse, order is normalised, an unknown value is refused | `ErrInvalidTaskTypes` |
+| 5 | `EligibleTaskTypes` is a non-empty set of known types; duplicates collapse, order is normalised, an unknown value is refused. `PICK` is a known type and needs nothing else: a site gets PICK hints by listing it here (with `MaxCandidates` of at least 4 for the batching default), ADR 0012 | `ErrInvalidTaskTypes` |
 | 6 | `VerticalWeight` is finite and at least 0 | `ErrInvalidWeight` |
 | 7 | `Version >= 1`, +1 per change | `ErrInvalidVersion` (`Restore` only) |
 

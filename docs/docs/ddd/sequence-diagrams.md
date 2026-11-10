@@ -82,6 +82,13 @@ with backoff and, after 5 attempts, publishes it to `warehouse.fulfillment.event
 A save that loses a version race is such a transient failure. The relay publishes
 only when `DATABASE_URL` and `KAFKA_BROKERS` are set.
 
+The flow is the same for every task type, PICK included (ADR 0012): nothing in
+the use case, the pool or `recommend.Recommend` branches on the type, so a
+`TaskCompleted` of an announced PICK task moves the station to the pick face
+(its `to_location`, equal to its `from_location`), and the ranking interleaves
+PICK, RELOCATE and REPLENISH candidates by detour, then task id. The only
+type-dependent input is the site policy's `eligibleTaskTypes`.
+
 ## The hinted station claims a candidate
 
 ```mermaid
