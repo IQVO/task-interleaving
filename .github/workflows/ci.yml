@@ -318,6 +318,64 @@ jobs:
         run: govulncheck ./...
 
   # ============================================================
+  # CLASSIFICATION: DOCS/API DRIFT
+  # Guards against the generated "API Reference" docs
+  # (docs/docs/api-reference/rest/, produced by docusaurus-plugin-openapi-docs
+  # from apis/openapi.yaml) drifting out of sync with the spec they're
+  # supposed to mirror. Regenerates them exactly as `gen-api-docs` would and
+  # fails the PR if that produces any diff -- i.e. someone changed
+  # apis/openapi.yaml (or hand-edited the generated files) without running
+  # `npm run gen-api-docs task-interleaving` and committing the result.
+  # ============================================================
+  docs-api-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+      - name: Regenerate REST API docs from apis/openapi.yaml
+        run: npm run clean-api-docs task-interleaving && npm run gen-api-docs task-interleaving
+      - name: Fail if generated docs differ from what's committed
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code -- docs/api-reference/rest; then
+            echo "::error::docs/api-reference/rest is out of sync with apis/openapi.yaml." \
+                 "Run 'npm run gen-api-docs task-interleaving' inside docs/ and commit the result."
+            exit 1
+          fi
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v3.16.4
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.x"
+          check-latest: true
+      - uses: helm/chart-testing-action@720270857a28afd41e2426521a7801db09e9b510 # v2.9.0
+      - name: Run chart-testing (lint)
+        run: ct lint --charts charts/task-interleaving --validate-maintainers=false --check-version-increment=false
+      - name: Chart wiring tests (each Service selects exactly one Deployment)
+        run: |
+          pip install --require-hashes -r .github/requirements/chart-tests.txt
+          python3 charts/task-interleaving/tests/test_service_selectors.py
+
+  # ============================================================
   # CLASSIFICATION: PACKAGING (Helm chart tests)
   # Runs on EVERY push and PR (unlike helm-lint): the chart tests guard
   # behaviour, not packaging -- the env ConfigMap mounted via envFrom (gap
@@ -413,6 +471,63 @@ jobs:
       - run: npx tsc -b
       - run: npm test
       - run: npm run build
+
+  # Shift-left container scan: builds the image (no push) on every pull
+  # request, so a vulnerable base image or dependency is caught before
+  # merge, not just at publish time. Blocks on CRITICAL/HIGH with a known
+  # fix; findings also land in the repo's Security tab (SARIF) regardless
+  # of pass/fail so history is visible even when nothing blocks.
+  # ============================================================
+  # CLASSIFICATION: SECURITY SCANNER (container image)
+  # Runs for EVERY pull_request (into develop and into main) -- validated
+  # pre-merge; never on a push (develop or main), which was already
+  # validated as a PR.
+  # ============================================================
+
+
+  trivy-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build image (local only, not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: "task-interleaving:scan"
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy scan (SARIF, always uploaded)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        if: always()
+        with:
+          image-ref: 'task-interleaving:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
+      - name: Upload Trivy SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+      - name: "Trivy scan (blocking gate: CRITICAL/HIGH with a fix available)"
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: 'task-interleaving:scan'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
   # ============================================================
   # CLASSIFICATION: PUBLISH (Docker image) -- push-to-main only
