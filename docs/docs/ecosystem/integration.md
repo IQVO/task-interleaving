@@ -54,42 +54,48 @@ on both sides. Dotted edges have code on one side only.
 | Producer | Protocol | Topic | Contract (full `type`) | Status |
 | --- | --- | --- | --- | --- |
 | fulfillment-execution | Kafka, CloudEvents 1.0 | `warehouse.fulfillment.events` | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted`: reads `task_id`, `station_id` | **Built + verified.** Present in the producer's `apis/asyncapi.yaml`; `station_id` is a required field of its payload. |
-| fulfillment-execution | same | same | `...task.TaskAvailable`: reads `task_id, task_type, site_id, from_location, to_location, required_capabilities[], priority_band` (ignores `cpt`, `available_at`) | **Built + verified.** The producer publishes it since its ADR 0049 (commit `257a567`) and, since its ADR 0050 (PR #221), also for REPLENISH tasks. **Only RELOCATE and REPLENISH tasks are announced today**: the producer's AsyncAPI says "today only RELOCATE and REPLENISH tasks carry bins, so only they are announced", and that a PICK, PACK, SLAM, REBIN or transfer task "has no location in this service" and is not announced (`apis/asyncapi.yaml` of fulfillment-execution, TaskAvailable description). A REPLENISH task is announced with `from_location` = the source (reserve) bin and `to_location` = the destination (pick face) bin (its ADR 0050, section 6). |
+| fulfillment-execution | same | same | `...task.TaskAvailable`: reads `task_id, task_type, site_id, from_location, to_location, required_capabilities[], priority_band` (ignores `cpt`, `available_at`) | **Built + verified.** The producer publishes it since its ADR 0049 (commit `257a567`), for REPLENISH tasks too since its ADR 0050 (PR #221) and for PICK tasks since its ADR 0062 (PR #279, on its `origin/develop`). **Announced types: RELOCATE, REPLENISH and PICK.** A REPLENISH task is announced with `from_location` = the source (reserve) bin and `to_location` = the destination (pick face) bin (its ADR 0050, section 6). A PICK is announced only when its plan carries both the site (`WorkReleased.data.pick.site_id`) and the pick face (`from_bin`); the pick face is then both `from_location` and `to_location`, and a PICK missing either is not announced. A PACK, SLAM, REBIN or transfer task has no location in the producer and is not announced (`Task.Placement()` in fulfillment-execution). |
 | fulfillment-execution | same | same | `...task.TaskClaimed`: reads `task_id, task_type, station_id, claimed_at` | **Built + verified.** Published on the integration topic for every task type, with `claimed_at`. (The analytics-topic `TaskClaimed` is a separate, older row.) |
 | facility-layout | Kafka, CloudEvents 1.0 | `warehouse.facility.events` | `com.warehouse.wms.facility-layout.zone.ZoneRegistered` (`zoneId`, `siteCode`, `zoneCode`) | **Built + verified** in the producer's `apis/asyncapi.yaml`. |
 | facility-layout | same | same | `...locationslot.LocationSlotRegistered` (`locationCode`, `zoneId`) | **Built + verified.** |
 | facility-layout | same | same | `...locationslot.LocationSlotDecommissioned` (`locationCode`) | **Built + verified.** |
 | facility-layout | same | same | `...locationslot.LocationGeometryUpdated` (`locationCode`, `xM`, `yM`, `zM`) | **Built + verified.** The producer's AsyncAPI notes "No consumer wired today" for this message; this service is that consumer, once enabled. |
 
-Consequence of the announcement scope (RELOCATE and REPLENISH only): in a live
-cluster the open-task pool, and therefore every candidate list, contains
-**RELOCATE and REPLENISH tasks only**. A candidate is listed at its
-`from_location` (for a REPLENISH task the reserve bin), and a station's
+Consequence of the announcement scope (RELOCATE, REPLENISH and sited PICK): in a
+live cluster the open-task pool, and therefore every candidate list, contains
+**those three types only**. A candidate is listed at its `from_location` (for a
+REPLENISH task the reserve bin, for a PICK the pick face), and a station's
 position is only recorded when it completes an announced task, because the
 position is read from the pool copy's `to_location` (for a REPLENISH task the
-destination pick-face bin). A completion of any other task type (PICK, PACK, SLAM, REBIN)
-is recorded as completed and ignored (outcome `ignored`). The policy's other
-eligible task types (`PICK`, `PACK`, `REBIN`, `SLAM`) have no effect until the
-producer announces them.
+destination pick-face bin, for a PICK the pick face again). A candidate or an
+origin whose location has no known geometry is skipped or refused as for any
+other type (the geometry copy is keyed by facility-layout location code; the
+producer does not require a PICK's pick face to be such a code, ADR 0062). A
+completion of any other task type (PACK, SLAM, REBIN) is recorded as completed
+and ignored (outcome `ignored`). The policy's other eligible task types (`PACK`,
+`REBIN`, `SLAM`) have no effect until the producer announces them.
 
-**PICK readiness (ADR 0012).** The consumer side of that gap is closed and
-proven: `PICK` has always been in the consumed `task_type` enum, and an
-announced PICK task is stored and ranked exactly like a RELOCATE or REPLENISH
-one — type parity, survival of the per-site `maxCandidates` bound (1..5, which
-fits the batching default of 4), and the PICK-scale pool envelope are tested
-invariants (the last via the tagged `make load` suite, outside CI). The only
-open half is the producer's announcement scope, being closed by
-fulfillment-execution's pick-placement change: when it lands, announced PICK
-tasks flow through this context with zero change
-([ADR 0012](/docs/adr/0012-pick-a-first-class-interleaving-candidate)).
+**PICK (ADR 0012).** Both halves are now closed. Consumer side, no production
+code change: `PICK` has always been in the consumed `task_type` enum and in the
+policy catalogue, and an announced PICK task is stored and ranked exactly like a
+RELOCATE or REPLENISH one (detour, then task id; types interleave). Type parity,
+survival of the per-site `maxCandidates` bound (1..5, which fits the batching
+default of 4) and the PICK-scale pool envelope are tested invariants (the last
+via the tagged `make load` suite, outside `make check` and CI). Producer side:
+fulfillment-execution announces sited PICK tasks since its ADR 0062. What is
+still per site and manual: a site is inert until it declares a policy, and a
+policy only yields PICK hints when `eligibleTaskTypes` includes `PICK` (the
+batching default also needs `maxCandidates` of at least 4); no default policy
+exists ([ADR 0012](/docs/adr/0012-pick-a-first-class-interleaving-candidate)).
 
 **Status since the ADRs.** ADR 0001, ADR 0003 and ADR 0004 (bodies unchanged, they
 are immutable) mark the consumed `TaskAvailable` and `TaskClaimed` rows as
 "pending producer change P2". That is no longer true: both are published by
 fulfillment-execution on `origin/develop` (`TaskAvailable` by its ADR 0049 for
-RELOCATE, extended to REPLENISH by its ADR 0050; `TaskClaimed` for every task
-type), so the pool is no longer empty once the producers run. What stays open is the hint consumer (below) and the
-announcement of PICK, PACK, SLAM and REBIN tasks.
+RELOCATE, extended to REPLENISH by its ADR 0050 and to sited PICK tasks by its
+ADR 0062; `TaskClaimed` for every task
+type), so the pool is no longer empty once the producers run. What stays open is
+the announcement of PACK, SLAM and REBIN tasks.
 
 ### How every consumed message is handled
 
@@ -126,7 +132,7 @@ announcement of PICK, PACK, SLAM and REBIN tasks.
 | --- | --- | --- | --- | --- |
 | fulfillment-execution | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.events` | `com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued` | **Built + verified.** This service writes it (outbox + relay, key = station id). fulfillment-execution's `origin/develop` consumes it (`internal/adapters/inbound/kafka/interleaving_hint_consumer.go`, type `TypeInterleavingHintIssued`, topic `TaskInterleavingTopic`, group from `TASK_INTERLEAVING_CONSUMER_GROUP`, mandatory; its ADR 0051) into a local one-active-hint-per-station copy (`interleaving_hints`) that `claimNext` reads. `TASK_INTERLEAVING_MODE` accepts only `kafka` (empty means `kafka`); `off` and `permissive` are rejected at boot (`cmd/execution/interleaving.go`). `warehouse-infra` sets `TASK_INTERLEAVING_MODE=kafka` and the group `fulfillment-execution-interleaving` in `helm-values/fulfillment-execution.yaml`. |
 | analytics read side | Kafka, CloudEvents 1.0 | `warehouse.task-interleaving.analytics` | `InterleavingHintIssued`, `InterleavingHintConsumed`, `InterleavingHintExpired` (key = station id), `InterleavingPolicyDeclared` (key = site id) | **Built.** Consumed only by this service's own `cmd/ti-projector` (group `ANALYTICS_CONSUMER_GROUP`, default `task-interleaving-analytics`, deterministic poison to `warehouse.task-interleaving.analytics.dlq`), which feeds the analytical database that `cmd/ti-reports` serves (`GET /reports/hint-adoption`, `GET /reports/freshness`); ADR 0008. No other context consumes it. |
-| operators, warehouse-console | REST (Open Host Service) | `apis/openapi.yaml` | policy, hints, stations, recommendations (plus `GET /reports/hint-adoption` and `GET /reports/freshness`, served by `cmd/ti-reports`) | **Built.** The `task_interleaving_mfe` web remote (`web/`) calls the API; `warehouse-console` registers that remote (`src/remotes-manifest.json`, shell component `remoteComponents.ts`, route `/task-interleaving/*`, a Contexts tile) and renders a Hint Adoption report from `${apiOrigin}/api/task-interleaving/reports/hint-adoption` and `/reports/freshness` (`src/features/context-reports/taskInterleaving.config.tsx`, registry path `task-interleaving`). The chart's `gatewayApi` HTTPRoute publishes `/api/task-interleaving` (enabled in `warehouse-infra`'s values). Whether Kong routes the `/reports` sub-path to `ti-reports` is not established here: the infra values file says the chart has no Kong route for reports. |
+| operators, warehouse-console | REST (Open Host Service) | `apis/openapi.yaml` | policy, hints, stations, recommendations (plus `GET /reports/hint-adoption` and `GET /reports/freshness`, served by `cmd/ti-reports`) | **Built.** The `task_interleaving_mfe` web remote (`web/`) calls the API; `warehouse-console` registers that remote (`src/remotes-manifest.json`, shell component `remoteComponents.ts`, route `/task-interleaving/*`, a Contexts tile) and renders a Hint Adoption report from `${apiOrigin}/api/task-interleaving/reports/hint-adoption` and `/reports/freshness` (`src/features/context-reports/taskInterleaving.config.tsx`, registry path `task-interleaving`). The chart's `gatewayApi` HTTPRoute publishes `/api/task-interleaving` (enabled in `warehouse-infra`'s values). **Verified (2026-11-10): no Kong route reaches `ti-reports`.** The chart renders no reports route, `warehouse-infra`'s `helm-values/task-interleaving.yaml` says so, and the live cluster has no `task-interleaving-reports` `HTTPRoute` (read-only `kubectl get httproute -A`; 17 other contexts have a `<context>-reports` route at `/api/<context>/reports`). `ti-reports` is reachable only in-cluster through its ClusterIP Service `task-interleaving-analytics-reports:80`. The `/reports` paths are served only by `cmd/ti-reports`, never by `cmd/api` (`NewReportsRouter`, `cmd/ti-reports/main.go`); a request to `/api/task-interleaving/reports/...` matches the `/api/task-interleaving` route, which forwards to `cmd/api`, where no such route exists, so the console's Hint Adoption report cannot be served through the gateway until the chart gains a reports route (and `warehouse-infra` enables it). |
 | warehouse-ops-agent | MCP (Streamable HTTP, read-only) | `cmd/mcp` | the MCP read tools of ADR 0007 | **Client built, endpoint configured.** warehouse-ops-agent's `internal/adapters/outbound/mcpclient/task_interleaving.go` calls the read tools; `warehouse-infra`'s `helm-values/warehouse-ops-agent.yaml` points `taskInterleaving.endpoint` at `http://task-interleaving-mcp.warehouse-systems.svc.cluster.local:8090/mcp`. |
 
 Publication is through the transactional outbox: the aggregate row and its

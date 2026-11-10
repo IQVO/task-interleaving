@@ -229,8 +229,13 @@ nothing: no hint, no outbox row.
 Stop the service with Ctrl-C and remove the container with `docker rm -f ti-pg`.
 
 In a live cluster the pool only contains what fulfillment-execution announces:
-`TaskAvailable` is published today only for RELOCATE and REPLENISH tasks (see
-[Integration](/docs/ecosystem/integration)).
+`TaskAvailable` is published today for RELOCATE, REPLENISH and sited PICK tasks
+(see [Integration](/docs/ecosystem/integration)). PICK needs no code change here
+([ADR 0012](/docs/adr/0012-pick-a-first-class-interleaving-candidate)): it is a
+candidate once the site's policy lists `PICK` in `eligibleTaskTypes`, as the
+policies in this quickstart do; for pick batching also set `maxCandidates` to at
+least 4 (the bound is 1 to 5). The pool rows above are inserted by hand because
+no producer runs here.
 
 ## Drive the domain by hand
 
