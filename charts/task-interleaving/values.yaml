@@ -337,6 +337,19 @@ analytics:
       type: ClusterIP
       port: 80
       targetPort: 8092
+    # Kong exposure of the reports API (reports-route.yaml): host path
+    # /api/task-interleaving/reports rewritten to /reports. Off by default
+    # (the default render is unchanged); warehouse-infra turns it on with the
+    # real parentRefs. The route carries konghq.com/regex-priority: "10" so
+    # it outranks the api route's /api/task-interleaving prefix under Kong's
+    # traditional router (equal-priority regexes match in no fixed order).
+    route:
+      enabled: false
+      path: "/api/task-interleaving/reports"
+      parentRefs:
+        - name: ""
+          namespace: ""
+          sectionName: "http"
     resources:
       limits:
         cpu: 500m

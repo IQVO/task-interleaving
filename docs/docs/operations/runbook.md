@@ -44,8 +44,11 @@ the real Postgres and Kafka runtime, with no in-memory mode.
   default `/metrics`) and `prometheus.io/port` (`metrics.prometheus.port`, default
   `8080`, the api container's HTTP port) for `GET /metrics`
   ([Observability](/docs/operations/observability#metrics)).
-- **Gateway.** The HPA, the `HTTPRoute` (prefix `/api/task-interleaving`,
-  stripped before the service) and the Kong plugins (`cors` allowing
+- **Gateway.** The HPA, the `HTTPRoute`s (the api route, prefix
+  `/api/task-interleaving`, stripped before the service; the reports route
+  `/api/task-interleaving/reports` -> `/reports` under
+  `analytics.reports.route.enabled`, carrying `konghq.com/regex-priority:
+  "10"` so it outranks the api prefix) and the Kong plugins (`cors` allowing
   `Idempotency-Key`, `prometheus`, `opentelemetry`; never an auth plugin) are
   off by default and switched on by values.
 - **Tests.** `charts/task-interleaving/tests/render_test.sh` (renders with the
@@ -343,9 +346,12 @@ The declaration enqueues `InterleavingPolicyDeclared` (analytics). A stale
 `warehouse.task-interleaving.analytics` into the analytical database
 (`ANALYTICS_DATABASE_URL`, separate from `DATABASE_URL`) and `cmd/ti-reports`
 serves `GET /reports/hint-adoption` and `GET /reports/freshness` from it
-(in-cluster only, port 8092: the chart has no reports route and the live
-cluster has no `task-interleaving-reports` `HTTPRoute`, so Kong does not publish
-them; reach them with `kubectl port-forward` to the Service
+(port 8092; `analytics.reports.route.enabled=true` renders the Kong route
+`/api/task-interleaving/reports` — prefix rewritten to `/reports`,
+`konghq.com/regex-priority: "10"` so it outranks the `/api/task-interleaving`
+api route under Kong's traditional router. In the chart since this PR; live
+on k3s after the next release, chart pin and apply — until then reach the
+reports with `kubectl port-forward` to the Service
 `task-interleaving-analytics-reports`). Enable both with `analytics.enabled=true` plus
 `analytics.url` or `analytics.existingSecret`. The projector reuses
 `kafka.brokers`, uses the stable group `task-interleaving-analytics` and exits

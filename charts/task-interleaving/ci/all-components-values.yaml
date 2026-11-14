@@ -52,5 +52,12 @@ analytics:
   enabled: true
   url: "postgres://u@example.invalid:5432/analytics"
   consumerGroup: "task-interleaving-analytics"
+  reports:
+    route:
+      enabled: true
+      parentRefs:
+        - name: warehouse-gateway
+          namespace: kong
+          sectionName: http
 frontend:
   enabled: true
