@@ -264,6 +264,28 @@ fi
 expect_refusal "analytics without a DSN source" "neither analytics.url nor analytics.existingSecret" "${base[@]}" --set analytics.enabled=true
 expect_refusal "analytics without a consumer group" "analytics.consumerGroup" "${base[@]}" "${analytics[@]}" --set analytics.consumerGroup=
 
+# The reports Kong route: /api/task-interleaving/reports -> the reports
+# Service, prefix rewritten to /reports, and regex-priority 10 so it outranks
+# the api route's /api/task-interleaving prefix (Kong 3.9 answers
+# equal-priority regex routes in no fixed order; without the priority the api
+# Service answers the console's report calls with 404).
+reports_route="$(render_only reports-route.yaml "${base[@]}" "${analytics[@]}" \
+  --set analytics.reports.route.enabled=true \
+  --set analytics.reports.route.parentRefs[0].name=warehouse-gateway \
+  --set analytics.reports.route.parentRefs[0].namespace=kong)"
+grep -q "name: $release-analytics-reports$" <<<"$(awk '/^  name:/{print}' <<<"$reports_route")" || fail "the reports HTTPRoute must be named $release-analytics-reports"
+grep -q 'value: /api/task-interleaving/reports' <<<"$reports_route" || fail "the reports route must match /api/task-interleaving/reports"
+grep -q 'replacePrefixMatch: /reports' <<<"$reports_route" || fail "the reports route must rewrite its prefix to /reports (ti-reports serves /reports/<name>)"
+grep -q 'konghq.com/regex-priority: "10"' <<<"$reports_route" || fail 'the reports route must carry konghq.com/regex-priority: "10" to outrank the api prefix'
+grep -A3 'backendRefs:' <<<"$reports_route" | grep -q "name: $release-analytics-reports" || fail "the reports route must target the $release-analytics-reports Service"
+# Disabled or analytics off: nothing renders at all.
+if render "${base[@]}" "${analytics[@]}" | grep -q 'konghq.com/regex-priority'; then
+  fail "analytics.reports.route.enabled=false (the default) must render no reports route"
+fi
+if render "${base[@]}" --set analytics.reports.route.enabled=true | grep -q 'kind: HTTPRoute'; then
+  fail "the reports route must not render while analytics.enabled is false"
+fi
+
 # The web remote: its own nginx Deployment + ClusterIP Service, no DB/Kafka env,
 # and no route in this chart (the Nginx web gateway owns /mfes/task-interleaving/).
 frontend_dep="$(render_only frontend-deployment.yaml "${base[@]}" --set frontend.enabled=true)"
@@ -277,6 +299,7 @@ together="$(render "${everything[@]}")"
 for component in api mcp a2a analytics-projector analytics-reports frontend; do
   grep -q "app.kubernetes.io/component: $component\$" <<<"$together" || fail "the full render lacks the $component component"
 done
+grep -q 'value: /api/task-interleaving/reports' <<<"$together" || fail "the full render lacks the reports HTTPRoute (ci/all-components-values.yaml enables it)"
 if grep -E 'kind: (Ingress|HTTPRoute)' <<<"$together" | grep -q frontend; then
   fail "frontend routing must not live in this chart"
 fi
