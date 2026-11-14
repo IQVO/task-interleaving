@@ -224,10 +224,14 @@ both the integration topic and `warehouse.task-interleaving.analytics`;
 `:8091`, dead-letters unappliable messages to
 `warehouse.task-interleaving.analytics.dlq`); `cmd/ti-reports` serves the
 read-only report side on `:8092` (`GET /reports/hint-adoption`,
-`GET /reports/freshness`). It is in-cluster only: the chart renders no Kong
-route for it and the live cluster has no `task-interleaving-reports`
-`HTTPRoute`, so `/api/task-interleaving/reports/...` does not reach it
-(see [Integration](docs/docs/ecosystem/integration.md)).
+`GET /reports/freshness`). The chart renders its Kong route —
+`analytics.reports.route.enabled=true` (off by default) publishes
+`/api/task-interleaving/reports`, prefix rewritten to `/reports`, with
+`konghq.com/regex-priority: "10"` so it outranks the `/api/task-interleaving`
+api route under Kong's traditional router. In the chart since this PR; live
+on k3s after the next release, chart pin and apply — until then
+`/api/task-interleaving/reports/...` does not reach `ti-reports` through the
+gateway (see [Integration](docs/docs/ecosystem/integration.md)).
 
 ---
 

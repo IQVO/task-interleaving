@@ -1,0 +1,65 @@
+{{- if and .Values.analytics.enabled .Values.analytics.reports.route.enabled -}}
+{{- /*
+Reports exposure through Kong (the same fleet decision as the MCP and A2A
+routes, 2026-10-13: Kong config lives in the application charts, not
+warehouse-infra Terraform — chart-rendered routes are Helm/ArgoCD-reconciled
+forever, kubectl-applied ones silently vanish on rebuild).
+
+Host contract: /api/task-interleaving/reports -> Service
+<release>-analytics-reports:80, prefix rewritten to /reports (ti-reports
+registers GET /reports/hint-adoption and GET /reports/freshness, not bare
+/<name>; the console's Hint Adoption report calls
+${apiOrigin}/api/task-interleaving/reports/...).
+
+Priority: the reports prefix is NESTED under the api route's
+/api/task-interleaving prefix. Kong 3.9's traditional router turns both
+PathPrefix matches into regexes and answers equal-priority regex routes in
+no fixed order, so this route MUST carry konghq.com/regex-priority: "10"
+to outrank the api route — without it /api/task-interleaving/reports/*
+matches the api route first and lands on the api Service, which serves no
+/reports paths (404).
+
+Plugins: this chart's cors + prometheus + opentelemetry KongPlugins (see
+kong-plugins.yaml), attached by annotation. NO auth plugin — endpoints are
+unauthenticated by fleet-wide decision.
+*/ -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "task-interleaving.analyticsReportsFullname" . }}
+  labels:
+    {{- include "task-interleaving.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analytics-reports
+  annotations:
+    {{- with include "task-interleaving.kongPluginNames" . }}
+    konghq.com/plugins: {{ . | quote }}
+    {{- end }}
+    # The reports prefix must outrank the api prefix under Kong's traditional
+    # router: both become regex paths (~/api/task-interleaving(/.*) and
+    # ~/api/task-interleaving/reports(/.*)) and equal priorities match in no
+    # fixed order.
+    konghq.com/regex-priority: "10"
+spec:
+  parentRefs:
+    {{- range .Values.analytics.reports.route.parentRefs }}
+    - name: {{ .name }}
+      namespace: {{ .namespace }}
+      {{- if .sectionName }}
+      sectionName: {{ .sectionName }}
+      {{- end }}
+    {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ .Values.analytics.reports.route.path }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /reports
+      backendRefs:
+        - name: {{ include "task-interleaving.analyticsReportsFullname" . }}
+          port: {{ .Values.analytics.reports.service.port }}
+{{- end }}
