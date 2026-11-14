@@ -14,13 +14,14 @@ Kafka, architecture fitness tests, and spec linting.
 
 | Layer | Count / threshold | Command |
 | --- | --- | --- |
-| Unit, domain | 85 top-level test functions in 4 packages (`policy` 16, `recommend` 17, `stationtrip` 43, `travel` 9) | `make test` |
+| Unit, domain | 88 top-level test functions in 4 packages (`policy` 17, `recommend` 19, `stationtrip` 43, `travel` 9); `recommend` includes the PICK parity and candidate-bound tests of ADR 0012 | `make test` |
 | Unit, application | 24 in `internal/application/{usecases,outbox}` (23 + 1) | `make test` |
-| Unit and httptest, adapters and `cmd/api` | `inbound/http` 55, `inbound/kafka` 46, `inbound/expiry` 11, `outbound/memory` 24, `outbound/events` 13, `outbound/outbox` 13, `outbound/kafka` 5, `kafka/cloudevents` 6, `outbound/postgres` 1 (DSN selection), `cmd/api` 25, `bootretry` 6 | `make test` |
+| Unit and httptest, adapters and `cmd/*` | `inbound/http` 72, `inbound/kafka` 57, `inbound/expiry` 11, `inbound/a2a` 17, `inbound/mcp` 21, `outbound/memory` 23, `outbound/events` 13, `outbound/outbox` 13, `outbound/kafka` 12, `kafka/cloudevents` 6, `outbound/system` 2, `outbound/analyticsstore` 1, `outbound/postgres` 1 (DSN selection), `analytics/report` 9, `telemetry` 1, `cmd/api` 36, `cmd/a2a` 12, `cmd/mcp` 7, `cmd/ti-projector` 6, `cmd/ti-reports` 3, `bootretry` 6 | `make test` |
 | Coverage gate | 90% over `./internal/domain/...,./internal/application/...`; measured 99.9% on this commit | `make coverage` |
 | BDD (godog / Gherkin) | 6 feature files, **68 scenarios** (64 `Scenario` blocks, one of which is an outline with 5 example rows), 608 steps; all pass | `make bdd` |
-| Integration (testcontainers) | 55 top-level tests behind `//go:build integration`: `cmd/api` 7, `inbound/kafka` 4, `outbound/outbox` 8, `outbound/postgres` 36 | `make integration` |
-| Architecture fitness | 29 top-level test functions in `internal/architecture` (none skips) | `make arch-test` |
+| Integration (testcontainers) | 73 top-level functions behind `//go:build integration` (`TestMain` included): `cmd/api` 13, `cmd/a2a` 2, `cmd/mcp` 2, `inbound/kafka` 7, `outbound/analyticsstore` 5, `outbound/outbox` 8, `outbound/postgres` 36 | `make integration` |
+| Architecture fitness | 42 top-level test functions in `internal/architecture` (none skips) | `make arch-test` |
+| Load (tagged, not in CI) | 3 tests behind `//go:build load`: the recommender over a 1 000-task and a 10 000-task pool at PICK volume (`recommend` 2) and the full completion path (`usecases` 1), ADR 0012. They assert generous wall-clock limits (50 ms and 500 ms per call, 5 s end to end), not benchmarks | `make load` |
 | Mutation (gremlins) | efficacy 90, mutant coverage 90 (`.gremlins.yaml`); measured 100% / 100% on the four domain packages | `make mutation`, `make mutation-full` |
 | Spec linting (Spectral) | OpenAPI and AsyncAPI, `--fail-severity=warn` | CI `api-lint` |
 | Contract (schemathesis) | **none**: no schemathesis configuration and no CI job. Response shapes are checked against the OpenAPI document by a Go test instead (`internal/adapters/inbound/http/shape_test.go`) | none |
@@ -47,6 +48,7 @@ scope and the mutation package list.
 | `make arch-test` | `go test ./internal/architecture/... -v` | |
 | `make bdd` | `go test ./... -run TestFeatures -v` | the godog suite, `features/features_test.go` (the module root holds no Go file) |
 | `make integration` | `go test -tags=integration ./... -race -count=1` | needs only Docker; every test boots its own Postgres and Kafka |
+| `make load` | `go test -tags=load ./... -race -count=1 -run '^TestLoad(Recommend\|Completion)' -v` | the PICK-volume envelope of ADR 0012; deliberately outside `make check`, `make check-all` and CI |
 | `make mutation` | `gremlins unleash` on each of `./internal/domain/stationtrip ./internal/domain/recommend ./internal/domain/travel ./internal/domain/policy` | the fast, blocking subset (`MUTATION_FAST_PKGS`) |
 | `make mutation-full` | `gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30` | the exhaustive scheduled run |
 | `make vuln` | `govulncheck ./...` | |
@@ -67,7 +69,9 @@ in sync by hand.
   the rule *unknown geometry is unknown, never zero*, ranking by detour then task
   id independent of pool order, the claim time window (one nanosecond before
   issue, before expiry, at expiry), one Active hint per station, consumption at
-  most once, and ordered domain events.
+  most once, and ordered domain events. Two `recommend` tests pin ADR 0012:
+  PICK ranks against RELOCATE and REPLENISH by detour only, and every candidate
+  survives up to the `MaxCandidates` bound.
 - **Use cases** (`internal/application/usecases`): run against the in-memory
   adapters, which are test doubles only (the shipped binary never imports them;
   `internal/architecture/runtime_no_memory_fitness_test.go` enforces it), including injected faults (`faults_test.go`), input validation
@@ -122,11 +126,11 @@ Postgres, and a missing Docker is a test failure, never a skip.
 | Real entry point | `cmd/api/e2e_integration_test.go` (2) | `run()` is booted in-process on real Postgres and a real Kafka whose topic auto-creation is **off**: `/readyz` is `200` while none of the four topics exists (topics are not part of readiness, ADR 0006 Amendment 1), then the test creates them; layout, policy, task and completion events published to Kafka produce an `InterleavingHintIssued` ranked by detour (read from REST, Postgres and the produced topic); a claim of the top candidate consumes the hint; a restart halfway and a full replay lose and duplicate nothing; the service stays alive but not ready while Kafka is unreachable |
 | Repositories and contract | `outbound/postgres` (36) | the repository contract suite (`internal/testing/repocontract`) for policies, trips, task pool, location book, processed events and the idempotency store; one Active hint per station even under racing issuers; version-guarded policy writes under races; unit-of-work rollback and nesting; outbox ordering, retry, attempt cap and trace-context headers; migrations apply, re-run as a no-op, every `down` restores the previous schema, and run from the unpooled URL only |
 | Outbox relay | `outbound/outbox` (8) | exact envelopes published for issued/consumed/expired, crash and restart without duplicates, a crash between send and mark republishes the **same id**, the attempt cap excludes a poison row, re-arming claims it again, no cap lets a poison row block later rows |
-| Consumers | `inbound/kafka` (4) | the fulfillment consumer and the layout consumer over a real Kafka and Postgres, and the no-policy case issuing no hint |
+| Consumers | `inbound/kafka` (7) | the fulfillment consumer and the layout consumer over a real Kafka and Postgres, the no-policy case issuing no hint, the analytics consumer, and the PICK parity pair of ADR 0012 (`pick_parity_integration_test.go`: a mixed PICK/RELOCATE/REPLENISH pool interleaves by detour from the producer's pinned `TaskAvailable` JSON, and a five-candidate hint keeps every candidate) |
 
 `make integration` and the CI `integration` job run the same command,
 `go test -tags=integration ./... -race -count=1`, which covers every package, so
-all four suites run in CI. An architecture fitness test fails the
+every suite above runs in CI. An architecture fitness test fails the
 build if an integration test gates on `DATABASE_URL`/`KAFKA_BROKERS` or
 hard-codes `localhost:9092`.
 

@@ -40,7 +40,7 @@ Page map (source under `docs/docs/`):
 | Ecosystem | [Integration](docs/docs/ecosystem/integration.md) |
 | DDD | [Use cases](docs/docs/ddd/use-cases.md) (the 14 application use cases), [Subdomain classification](docs/docs/ddd/subdomain-classification.md), [DDD artifacts](docs/docs/ddd/ddd-artifacts.md) (the 11-page ddd-crew pack) |
 | API reference | [REST](docs/docs/api-reference/overview.md) (generated from `apis/openapi.yaml`), [Events](docs/docs/api-reference/events.md) |
-| Decisions | [ADR index](docs/adr/index.md) — decisions 0001 to 0009 with status |
+| Decisions | [ADR index](docs/adr/index.md) — decisions 0001 to 0012 with status |
 
 The MCP server, the analytics read side and the A2A server are described in
 ADRs [0007](docs/adr/0007-mcp-server-adoption.md),
@@ -90,7 +90,7 @@ an attempt cap, ADR 0004):
 
 | Topic | Messages | Notes |
 |---|---|---|
-| `warehouse.task-interleaving.events` | `InterleavingHintIssued` (`com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued`) | The integration topic; key = station id. **Published, not consumed**: `fulfillment-execution`'s `origin/develop` has no code that reads it (its ADRs 0049/0050 list the consumer as out of scope). |
+| `warehouse.task-interleaving.events` | `InterleavingHintIssued` (`com.warehouse.wes.task-interleaving.stationtrip.InterleavingHintIssued`) | The integration topic; key = station id. Consumed by `fulfillment-execution` (group `TASK_INTERLEAVING_CONSUMER_GROUP`, its ADR 0051): a local one-hint-per-station copy used only as a tie-break inside one `claimNext` priority band, failing open. |
 | `warehouse.task-interleaving.analytics` | `InterleavingHintIssued`, `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` (`com.warehouse.wes.task-interleaving.policy.…` for the policy) | The analytics stream (ADR 0008); the last three exist **only** here. The only consumer is this service's own `cmd/ti-projector`. Unappliable messages are dead-lettered byte-for-byte to `warehouse.task-interleaving.analytics.dlq`. |
 
 **Consumes** (each with retry, a `<topic>.dlq` dead-letter topic and
@@ -98,7 +98,7 @@ processed-event de-duplication; ADR 0003):
 
 | Topic | Messages | Consumer group |
 |---|---|---|
-| `warehouse.fulfillment.events` | `TaskAvailable`, `TaskClaimed`, `TaskCompleted` (`com.warehouse.wes.fulfillment-execution.task.*`) — `TaskAvailable` only for RELOCATE and REPLENISH tasks (producer ADR 0050); every other type ignored | `FULFILLMENT_CONSUMER_GROUP` |
+| `warehouse.fulfillment.events` | `TaskAvailable`, `TaskClaimed`, `TaskCompleted` (`com.warehouse.wes.fulfillment-execution.task.*`) — `TaskAvailable` for RELOCATE, REPLENISH and sited PICK tasks (producer ADRs 0049, 0050, 0062); PACK, SLAM and REBIN are not announced; every other type ignored | `FULFILLMENT_CONSUMER_GROUP` |
 | `warehouse.facility.events` | `ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`, `LocationGeometryUpdated` (`com.warehouse.wms.facility-layout.…`) — the local geometry copy; every other type ignored | `LAYOUT_CONSUMER_GROUP` |
 
 Contracts are pinned in `apis/asyncapi.yaml` (consumer-first, ADR 0003).
@@ -168,22 +168,29 @@ the [Quickstart](docs/docs/overview/quickstart.md).
 
 ## Observability
 
-Today the service emits **structured logs and nothing else** (see
-[Observability](docs/docs/operations/observability.md), which proves the
-absence): no OpenTelemetry instrument, span, OTLP exporter or `/metrics`
-endpoint exists in `cmd/` or under `internal/` — `go.opentelemetry.io/otel`
-appears only as an indirect dependency. What exists:
+`cmd/api` emits structured logs and five OpenTelemetry metrics on `GET /metrics`
+(see [Observability](docs/docs/operations/observability.md)). What exists:
 
+- **Metrics**: the OTel Prometheus exporter is mounted on `GET /metrics` of the
+  HTTP port (no separate metrics port), over `internal/telemetry`:
+  `taskinterleaving.hints.issued`, `.hints.consumed` and `.hints.expired`
+  (counters, attribute `site`), `taskinterleaving.recommender.duration`
+  (histogram, seconds) and `taskinterleaving.kafka.consumer.lag` (histogram,
+  seconds, attribute `consumer`). Only `cmd/api` installs the exporter; the chart
+  value `metrics.prometheus.enabled` (default `false`) renders the pod scrape
+  annotations.
 - **Logs**: JSON (`log/slog`) on stdout, one object per line with `time`,
   `level`, `msg` and structured fields (`addr`, `consumer`, `topic`,
   `group_id`, `interval`, `max_attempts`, …). Level from `LOG_LEVEL`
   (default `info`). There is no HTTP access-log middleware, so a successful
   request leaves no line.
-- **Trace-context plumb-through**: the outbox inserts the W3C `traceparent`
-  (and `tracestate`/`baggage` when present) of the writing request into the
-  row's headers, so a relay copy carries it onto the Kafka message. With no
-  tracer provider installed today, no trace header is ever written; an
-  integration test installs a propagator itself to prove the mechanism.
+- **Traces**: the A2A adapter starts one span per skill call from the global
+  tracer, but no binary installs a tracer provider, so no span is recorded or
+  exported. The outbox inserts the W3C `traceparent` (and `tracestate`/`baggage`
+  when present) of the writing request into the row's headers, so a relay copy
+  carries it onto the Kafka message; with no tracer provider installed today, no
+  trace header is ever written. An integration test installs a propagator itself
+  to prove the mechanism.
 
 ---
 
@@ -217,7 +224,14 @@ both the integration topic and `warehouse.task-interleaving.analytics`;
 `:8091`, dead-letters unappliable messages to
 `warehouse.task-interleaving.analytics.dlq`); `cmd/ti-reports` serves the
 read-only report side on `:8092` (`GET /reports/hint-adoption`,
-`GET /reports/freshness`).
+`GET /reports/freshness`). The chart renders its Kong route —
+`analytics.reports.route.enabled=true` (off by default) publishes
+`/api/task-interleaving/reports`, prefix rewritten to `/reports`, with
+`konghq.com/regex-priority: "10"` so it outranks the `/api/task-interleaving`
+api route under Kong's traditional router. In the chart since this PR; live
+on k3s after the next release, chart pin and apply — until then
+`/api/task-interleaving/reports/...` does not reach `ti-reports` through the
+gateway (see [Integration](docs/docs/ecosystem/integration.md)).
 
 ---
 
@@ -274,9 +288,10 @@ Deployed, it is built into a static bundle served by its own nginx image
 `http://localhost/mfes/task-interleaving/`. The remote reads its API origin
 at runtime from `window.__WAREHOUSE_CONFIG__.apiOrigin`
 (`${apiOrigin}/api/task-interleaving`); a production build with no runtime
-config fails loudly instead of guessing. Not yet wired into the cluster's
-`warehouse-infra` entry, and the shell's entry for the remote in
-`warehouse-console` is not built yet — the
+config fails loudly instead of guessing. `warehouse-infra` registers it
+(`frontend_remote: task_interleaving_mfe` in `terraform/apps.yaml`) and
+`warehouse-console` registers it too (`src/remotes-manifest.json`, route
+`/task-interleaving/*`, a Contexts tile and a Hint Adoption report); the
 [Integration](docs/docs/ecosystem/integration.md) page tracks the exact
 state of each edge.
 

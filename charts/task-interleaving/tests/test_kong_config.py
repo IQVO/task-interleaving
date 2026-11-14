@@ -22,11 +22,20 @@ This test is the sensor for that decision. It fails if:
   * the A2A route (when enabled) does not match /api/a2a/task-interleaving,
     does not rewrite to / (so the Agent Card at /.well-known/agent-card.json
     stays reachable under the prefix), or lacks the plugin annotation,
+  * the reports route (when enabled) does not match
+    /api/task-interleaving/reports, does not rewrite to /reports, lacks the
+    plugin annotation, or lacks konghq.com/regex-priority: "10" — the
+    reports prefix is nested under the api route's /api/task-interleaving
+    prefix and Kong 3.9's traditional router answers equal-priority regex
+    routes in no fixed order, so without the higher priority the api Service
+    answers /api/task-interleaving/reports/* with 404,
   * defaults (no --set flags beyond the mandatory runtime values) render any
     Kong object at all — standalone installs without Kong must be unaffected.
 
-The API route and the optional MCP (/api/mcp/task-interleaving -> /mcp) and A2A
-(/api/a2a/task-interleaving -> /) routes are the only Kong routes: reports and the web remote are never routed here.
+The API route and the optional MCP (/api/mcp/task-interleaving -> /mcp), A2A
+(/api/a2a/task-interleaving -> /) and reports
+(/api/task-interleaving/reports -> /reports) routes are the only Kong
+routes: the web remote is never routed here.
 
 Run: python3 charts/task-interleaving/tests/test_kong_config.py
 """
@@ -68,16 +77,23 @@ ENABLE_KONG = MANDATORY + [
     "--set", "a2a.route.enabled=true",
     "--set", "a2a.route.parentRefs[0].name=warehouse-gateway",
     "--set", "a2a.route.parentRefs[0].namespace=kong",
+    "--set", "analytics.enabled=true",
+    "--set", "analytics.url=postgres://user:***@localhost:5432/analytics",
+    "--set", "analytics.reports.route.enabled=true",
+    "--set", "analytics.reports.route.parentRefs[0].name=warehouse-gateway",
+    "--set", "analytics.reports.route.parentRefs[0].namespace=kong",
 ]
 
 API_PREFIX, API_TARGET = "/api/task-interleaving", "/"
 MCP_PREFIX, MCP_TARGET = "/api/mcp/task-interleaving", "/mcp"
 A2A_PREFIX, A2A_TARGET = "/api/a2a/task-interleaving", "/"
+REPORTS_PREFIX, REPORTS_TARGET = "/api/task-interleaving/reports", "/reports"
 
 # route name suffix -> (expected match prefix, expected rewrite target)
 ROUTE_CONTRACT = {
     "-mcp": (MCP_PREFIX, MCP_TARGET),
     "-a2a": (A2A_PREFIX, A2A_TARGET),
+    "-analytics-reports": (REPORTS_PREFIX, REPORTS_TARGET),
 }
 
 
@@ -111,8 +127,8 @@ def check_routes(routes: list[dict], plugins: dict[str, dict], failures: list[st
         prefix, target = next((c for suffix, c in ROUTE_CONTRACT.items() if name.endswith(suffix)), (API_PREFIX, API_TARGET))
         for rule in r.get("spec", {}).get("rules", []):
             check_rule(name, rule, prefix, target, failures)
-    if sorted(r["metadata"]["name"] for r in routes) != [RELEASE, f"{RELEASE}-a2a", f"{RELEASE}-mcp"]:
-        failures.append("expected exactly the api, the a2a and the mcp HTTPRoute")
+    if sorted(r["metadata"]["name"] for r in routes) != [RELEASE, f"{RELEASE}-a2a", f"{RELEASE}-analytics-reports", f"{RELEASE}-mcp"]:
+        failures.append("expected exactly the api, the a2a, the mcp and the reports HTTPRoute")
 
 
 def check_rule(name: str, rule: dict, want_prefix: str, want_target: str, failures: list[str]) -> None:
@@ -149,6 +165,22 @@ def check_plugins(plugins: dict[str, dict], failures: list[str]) -> None:
         failures.append("the cors plugin must allow the If-Match request header the policy edit sends")
 
 
+def check_reports_priority(routes: list[dict], failures: list[str]) -> None:
+    """The reports route outranks the API prefix under Kong's traditional
+    router: equal regex priorities match in no fixed order, so without
+    konghq.com/regex-priority "10" /api/task-interleaving/reports/* can land
+    on the API Service (404)."""
+    reports_routes = [r for r in routes if r["metadata"]["name"].endswith("-analytics-reports")]
+    if not reports_routes:
+        failures.append("enabled render contains no reports HTTPRoute")
+    for r in reports_routes:
+        prio = (r.get("metadata", {}).get("annotations") or {}).get("konghq.com/regex-priority")
+        if prio != "10":
+            failures.append(
+                f"reports route {r['metadata']['name']} has konghq.com/regex-priority {prio!r}, expected '10'"
+            )
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -169,14 +201,24 @@ def main() -> int:
     routes = [d for d in docs if d.get("kind") == "HTTPRoute"]
     check_routes(routes, plugins, failures)
     check_plugins(plugins, failures)
+    check_reports_priority(routes, failures)
+
+    # 3. Analytics on but the reports route off renders no reports route.
+    analytics_only = render(MANDATORY + [
+        "--set", "analytics.enabled=true",
+        "--set", "analytics.url=postgres://user:***@localhost:5432/analytics",
+    ])
+    if any(d.get("kind") == "HTTPRoute" and d["metadata"]["name"].endswith("-analytics-reports") for d in analytics_only):
+        failures.append("analytics.reports.route.enabled=false must render no reports HTTPRoute")
 
     if failures:
         print("FAIL: task-interleaving chart Kong-config contract")
         for f in failures:
             print(f"  - {f}")
         return 1
-    print(f"PASS: {len(routes)} HTTPRoutes (api, mcp, a2a) annotated and stripping their prefix, {len(plugins)} KongPlugins, "
-          "no auth plugin, defaults are a no-op")
+    print(f"PASS: {len(routes)} HTTPRoutes (api, mcp, a2a, reports) annotated and stripping their prefix, "
+          "the reports route outranks the api prefix (regex-priority 10), "
+          f"{len(plugins)} KongPlugins, no auth plugin, defaults are a no-op")
     return 0
 
 

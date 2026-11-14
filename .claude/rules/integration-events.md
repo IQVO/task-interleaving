@@ -106,7 +106,7 @@ WARN and committed past.
 
 | `type` | topic | producer |
 | --- | --- | --- |
-| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | fulfillment-execution (published since its ADR 0049; RELOCATE and REPLENISH tasks only, ADR 0050) |
+| `com.warehouse.wes.fulfillment-execution.task.TaskAvailable` | `warehouse.fulfillment.events` | fulfillment-execution (published since its ADR 0049; RELOCATE and REPLENISH tasks, and a PICK task whose plan carries a site and a pick face) |
 | `com.warehouse.wes.fulfillment-execution.task.TaskClaimed` | `warehouse.fulfillment.events` | fulfillment-execution (published since its ADR 0049) |
 | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | fulfillment-execution (verified) |
 | `com.warehouse.wms.facility-layout.zone.ZoneRegistered` | `warehouse.facility.events` | facility-layout (verified) |
@@ -124,12 +124,15 @@ transaction, then the offset is committed. A claim of a task the pool never saw
 records a minimal task; a completion of one is recorded as completed and
 otherwise ignored; neither is ever dead-lettered.
 
-**`TaskAvailable` is announced only for tasks with bins (RELOCATE and REPLENISH).** fulfillment-execution
-publishes `TaskAvailable` and `TaskClaimed` on `warehouse.fulfillment.events` (its
-ADR 0049); its AsyncAPI says a PICK, PACK, SLAM or REBIN task has no location in
-that service and is not announced. The open-task pool, and every hint, therefore
-concern RELOCATE and REPLENISH tasks; a completion of any other type finds no `to_location` to
-stand at, is recorded as completed and no position and no hint follow. A missing
+**`TaskAvailable` is announced only for tasks whose location fulfillment-execution knows.**
+fulfillment-execution publishes `TaskAvailable` and `TaskClaimed` on
+`warehouse.fulfillment.events` (its ADR 0049); its AsyncAPI says RELOCATE and REPLENISH
+tasks carry bins and are announced, a PICK task is announced when its plan carries both
+the site and the pick face (the pick face stands for both ends of the trip), and a PACK,
+SLAM, REBIN or transfer task has no location there and is not announced. The open-task
+pool, and every hint, therefore concern those announced tasks; a completion of any other
+type finds no `to_location` to stand at, is recorded as completed and no position and no
+hint follow. A missing
 field never crashes the consumer: a payload the use case can never apply goes
 to the DLQ.
 

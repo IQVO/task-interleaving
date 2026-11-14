@@ -35,7 +35,7 @@ for real responses.
 | Hints | `GET /hints/{hintId}` | `getHint` | `200`, the hint with its candidates and outcome |
 | Stations | `GET /stations/{stationId}` | `getStation` | `200`, position, last completed task, Active hint; `404 station-not-found` |
 | Recommendations | `POST /recommendations` | `recommendTasks` | `200`, ranked candidates, possibly empty; read-only simulation |
-| Reports | `GET /reports/hint-adoption`, `GET /reports/freshness` | `getHintAdoption`, `getReportsFreshness` | `200`, served by `cmd/ti-reports` (port 8092, in-cluster only) from the analytical database; see [ADR 0008](/docs/adr/0008-analytics-read-side) |
+| Reports | `GET /reports/hint-adoption`, `GET /reports/freshness` | `getHintAdoption`, `getReportsFreshness` | `200`, served by `cmd/ti-reports` (port 8092; through Kong `/api/task-interleaving/reports`, prefix rewritten to `/reports`, `konghq.com/regex-priority: "10"` so it outranks the `/api/task-interleaving` api route — in the chart since this PR; live on k3s after the next release, chart pin and apply, see [Integration](/docs/ecosystem/integration)) from the analytical database; see [ADR 0008](/docs/adr/0008-analytics-read-side) |
 | Health | `GET /healthz`, `GET /readyz` | `healthz`, `readyz` | `200` / `200`, or `503` once shutdown has started (the spec also says "while starting"; the listener only opens after boot, see [Runbook](/docs/operations/runbook#probes)) |
 
 ## Conventions in the contract

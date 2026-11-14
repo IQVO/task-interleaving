@@ -34,7 +34,7 @@ MUTATION_FULL_PKG  := ./internal/domain
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build vet fmt fmt-check lint test coverage integration bdd arch-test mutation mutation-full vuln check check-all
+.PHONY: help build vet fmt fmt-check lint test coverage integration load bdd arch-test mutation mutation-full vuln check check-all
 
 help:
 	@echo "task-interleaving — local quality gate (targets mirror .github/workflows/ci.yml)"
@@ -49,6 +49,9 @@ help:
 	@echo "  coverage       CI coverage command + the $(COVERAGE_THRESHOLD)% gate"
 	@echo "  integration    go test -tags=integration ./... -race -count=1"
 	@echo "                 (testcontainers boots its own Postgres/Kafka; needs only Docker; not in check)"
+	@echo "  load           go test -tags=load ./... -race -count=1 -run '^TestLoad'"
+	@echo "                 (the PICK-volume performance envelope of the recommender, ADR 0012;"
+	@echo "                 no Docker needed; not in check — run when the pool's shape changes)"
 	@echo "  bdd            go test ./... -run TestFeatures -v — godog/Gherkin acceptance"
 	@echo "  arch-test      go test ./internal/architecture/... -v — hexagonal fitness"
 	@echo "  mutation       gremlins on each of $(MUTATION_FAST_PKGS) — the fast blocking subset"
@@ -113,6 +116,12 @@ coverage:
 # Deliberately NOT part of `check` / `check-all`.
 integration:
 	$(GO) test -tags=integration ./... -race -count=1
+
+# The PICK-volume performance envelope of the recommender and the completion
+# path (ADR 0012), over the in-memory doubles: no Docker, not in CI — run it
+# when the pool's shape or the recommender changes.
+load:
+	$(GO) test -tags=load ./... -race -count=1 -run '^TestLoad(Recommend|Completion)' -v
 
 bdd:
 	$(GO) test ./... -run TestFeatures -v

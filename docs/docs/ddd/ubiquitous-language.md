@@ -24,7 +24,7 @@ fixed by `apis/` or an ADR rather than by a Go identifier.
 | **Origin** | Where the station stands now; the point distances are measured from. Without known geometry no hint can be computed. | `recommend.Input.Origin`, `ErrOriginUnknown` |
 | **Open-task pool** | The event-fed local copy of the tasks still open, with where each starts and ends. An input of the recommender, not aggregate state. | `[]recommend.OpenTask`, `ports.TaskPool`, table `task_pool` |
 | **Priority band** | An opaque string equal across tasks that fulfillment-execution orders as peers. Carried, never interpreted here. | `TaskAvailable.priority_band` *(contract)* |
-| **Tie-break** | How fulfillment-execution may use a hint: only inside one priority band, fail-open. | ADR 0001 *(fulfillment-execution does not consume the hint yet)* |
+| **Tie-break** | How fulfillment-execution may use a hint: only inside one priority band, fail-open. | ADR 0001 *(consumed by fulfillment-execution since its ADR 0051)* |
 | **InterleavingPolicy** | The per-site settings, versioned, one per site. | `policy.Policy` |
 | **Inert (site)** | A site that never declared a policy: no hint is issued for it. | ADR 0002; `repository.ErrPolicyNotFound`, `404 policy-not-found` |
 | **Settings** | The values an operator declares: max detour, max candidates, hint TTL, eligible task types, vertical weight. | `policy.Settings` |
