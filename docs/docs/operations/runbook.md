@@ -218,7 +218,7 @@ never dropped silently.
 
 | Topic | Types | Key | Consumers |
 | --- | --- | --- | --- |
-| `warehouse.task-interleaving.events` | `InterleavingHintIssued` | station id | none built (see [Integration](/docs/ecosystem/integration)) |
+| `warehouse.task-interleaving.events` | `InterleavingHintIssued` | station id | fulfillment-execution (consumer built, its ADR 0051; see [Integration](/docs/ecosystem/integration)) |
 | `warehouse.task-interleaving.analytics` | `InterleavingHintIssued`, `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` | station id (hint events), site id (policy event) | `ti-projector` only (ADR 0008) |
 
 The full type is `com.warehouse.wes.task-interleaving.<entity>.<EventName>`

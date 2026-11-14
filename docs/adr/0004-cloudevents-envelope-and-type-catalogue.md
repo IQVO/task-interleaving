@@ -94,3 +94,9 @@ other contexts consume the integration topic.
 - Two outbox rows per analytics-visible occurrence (one per topic) are written in
   one transaction, so the two topics cannot disagree about whether an occurrence
   happened.
+
+## Addendum 2026-11-13: current state
+
+The `pending producer change P2` status of the `TaskAvailable` and `TaskClaimed` rows and the "consumer change P3" wording are out of date,
+read from fulfillment-execution's `origin/develop`: it publishes both task events (`apis/asyncapi.yaml`, lines 482 and 644; its ADR 0049, 0050
+and 0062) and consumes `InterleavingHintIssued` (`internal/adapters/inbound/kafka/interleaving_hint_consumer.go`; its ADR 0051).

@@ -75,8 +75,8 @@ together with the claim of the CloudEvents id. Branches:
 - A duplicate CloudEvents id: outcome `duplicate`, nothing runs.
 - A site with no policy: inert, no hint.
 - The hint is advisory: fulfillment-execution may use it as a tie-break inside one
-  priority band. It does not consume it yet (no code reads
-  `warehouse.task-interleaving.events` there).
+  priority band. Its consumer exists (its ADR 0051; `internal/adapters/inbound/kafka/interleaving_hint_consumer.go`
+  in fulfillment-execution).
 
 ## Flow 3 — the hinted station claims a candidate
 
