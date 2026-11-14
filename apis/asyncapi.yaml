@@ -33,8 +33,9 @@ info:
 
     **Consumed (ADR 0003).** `TaskAvailable`, `TaskClaimed` and `TaskCompleted`
     from fulfillment-execution (`TaskAvailable` and `TaskClaimed` have been published on
-    its integration topic since its ADR 0049; `TaskAvailable` is announced only
-    for the task types that carry bins, RELOCATE and REPLENISH, ADR 0050), and `ZoneRegistered`,
+    its integration topic since its ADR 0049; `TaskAvailable` is announced for RELOCATE and
+    REPLENISH tasks, ADR 0050, and for a PICK task whose plan carries both the site and the
+    pick face, ADR 0062; PACK, SLAM and REBIN are not announced), and `ZoneRegistered`,
     `LocationSlotRegistered`, `LocationSlotDecommissioned` and
     `LocationGeometryUpdated` from facility-layout. Each feeds a durable local
     copy. Both consumers are always on (`FULFILLMENT_MODE` and `LAYOUT_MODE` only
@@ -158,8 +159,9 @@ channels:
       description: |
         `TaskAvailable` upserts a task into the local open-task pool and
         `TaskClaimed` removes it (both are published on the integration topic since
-        fulfillment-execution's ADR 0049; `TaskAvailable` only for RELOCATE and
-        REPLENISH tasks, ADR 0050). `TaskCompleted` (verified on
+        fulfillment-execution's ADR 0049; `TaskAvailable` for RELOCATE and
+        REPLENISH tasks, ADR 0050, and for a PICK task whose plan carries both the
+        site and the pick face, ADR 0062). `TaskCompleted` (verified on
         fulfillment-execution's `origin/develop`) records the completion at the
         station: the position is the completed task's `to_location` read from the
         local pool copy, so a completion of a task this context never saw as
@@ -391,10 +393,12 @@ components:
       title: TaskAvailable (consumed, fulfillment-execution)
       summary: A task entered or re-entered the open-task pool.
       description: |
-        Published by fulfillment-execution since its ADR 0049 (only for tasks that
-        carry bins: RELOCATE and REPLENISH, ADR 0050; a PICK, PACK, SLAM or REBIN
-        task has no location there and is not announced, so the per-type location
-        rules below describe what this consumer accepts, not what is sent today).
+        Published by fulfillment-execution since its ADR 0049, for the tasks whose
+        location it knows: RELOCATE and REPLENISH tasks carry bins (ADR 0050) and a
+        PICK task whose plan carries both the site and the pick face is announced too
+        (ADR 0062); a pick missing either, and PACK, SLAM and REBIN tasks, are not
+        announced, so the PACK, SLAM and REBIN location rules below describe what
+        this consumer accepts, not what is sent today).
         This contract was pinned here consumer-first. `type` = `com.warehouse.wes.fulfillment-execution.task.TaskAvailable`,
         source `/warehouse/fulfillment-execution`, dataschema
         `urn:warehouse:fulfillment-execution:events:TaskAvailable:v1`. Subject and
