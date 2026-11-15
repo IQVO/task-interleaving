@@ -18,7 +18,7 @@ Kafka, architecture fitness tests, and spec linting.
 | Unit, application | 24 in `internal/application/{usecases,outbox}` (23 + 1) | `make test` |
 | Unit and httptest, adapters and `cmd/*` | `inbound/http` 72, `inbound/kafka` 57, `inbound/expiry` 11, `inbound/a2a` 17, `inbound/mcp` 21, `outbound/memory` 23, `outbound/events` 13, `outbound/outbox` 13, `outbound/kafka` 12, `kafka/cloudevents` 6, `outbound/system` 2, `outbound/analyticsstore` 1, `outbound/postgres` 1 (DSN selection), `analytics/report` 9, `telemetry` 1, `cmd/api` 36, `cmd/a2a` 12, `cmd/mcp` 7, `cmd/ti-projector` 6, `cmd/ti-reports` 3, `bootretry` 6 | `make test` |
 | Coverage gate | 90% over `./internal/domain/...,./internal/application/...`; measured 99.9% on this commit | `make coverage` |
-| BDD (godog / Gherkin) | 6 feature files, **68 scenarios** (64 `Scenario` blocks, one of which is an outline with 5 example rows), 608 steps; all pass | `make bdd` |
+| BDD (godog / Gherkin) | 13 feature files, **182 scenarios** executed (124 `Scenario` / `Scenario Outline` definitions, 16 of them outlines whose Examples rows expand), 1818 steps; all pass | `make bdd` |
 | Integration (testcontainers) | 73 top-level functions behind `//go:build integration` (`TestMain` included): `cmd/api` 13, `cmd/a2a` 2, `cmd/mcp` 2, `inbound/kafka` 7, `outbound/analyticsstore` 5, `outbound/outbox` 8, `outbound/postgres` 36 | `make integration` |
 | Architecture fitness | 42 top-level test functions in `internal/architecture` (none skips) | `make arch-test` |
 | Load (tagged, not in CI) | 3 tests behind `//go:build load`: the recommender over a 1 000-task and a 10 000-task pool at PICK volume (`recommend` 2) and the full completion path (`usecases` 1), ADR 0012. They assert generous wall-clock limits (50 ms and 500 ms per call, 5 s end to end), not benchmarks | `make load` |
@@ -100,10 +100,24 @@ go test ./internal/application/usecases -v
 
 ## BDD (godog)
 
-`features/*.feature` holds six files: `hints.feature` (13 scenarios: hint
-lifecycle, supersede, consume, expiry, duplicates), `inert.feature` (3),
-`policy.feature` (12 blocks, one outline with 5 rows), `ranking.feature` (16),
-`simulation.feature` (10) and `tasks.feature` (10: pool and claim copies).
+`features/*.feature` holds thirteen files. The six original ones: `hints.feature`
+(13 scenarios: hint lifecycle, supersede, consume, expiry, duplicates),
+`inert.feature` (3), `policy.feature` (12 blocks, one outline with 5 rows),
+`ranking.feature` (16), `simulation.feature` (10) and `tasks.feature` (10:
+pool and claim copies). Seven `*_rules.feature` files pin the rules the
+context documentation states (use-cases, aggregate canvas invariants and
+transitions, ubiquitous language, troubleshooting), one rule per scenario with
+boundaries as Outline rows: `hint_lifecycle_rules` (8: claim window
+`[issued_at, expires_at)`, final states, stale completions, `HintIssued`
+context), `hint_expiry_rules` (3: only due and Active hints, 200-station
+batch), `policy_rules` (15: bounds, replacement, versions, site id),
+`recommender_rules` (9: rectilinear distance, vertical weight, detour limit,
+eligibility), `consumer_rules` (16: malformed payloads, duplicates, claimer
+and completer, decommission, geometry), `hint_query_rules` (5: listing,
+filters, paging, not-found) and `simulation_rules` (4). Their steps are in
+`features/features_rules_test.go` and `features/features_rules_assert_test.go`.
+Definitions in all: 124 (`^[[:space:]]*Scenario` in `features/`), 16 of them
+outlines.
 The godog runner `features/features_test.go` (package `features_test`, godog
 `Paths` `["."]`) and its `features/features_setup/flow/assertions_test.go`
 companions live in the same directory as the `.feature` files; the repository
@@ -111,7 +125,7 @@ root holds no `.go` file at all (`TestNoGoFilesAtRepoRoot` in
 `internal/architecture` enforces it). They wire the **real use cases over the
 in-memory adapters** with a fake clock, so the scenarios are fast and need no
 Docker. `go test ./features -run TestFeatures -v` ends with
-`68 scenarios (68 passed)` and `608 steps (608 passed)`.
+`182 scenarios (182 passed)` and `1818 steps (1818 passed)`.
 
 ## Integration (testcontainers)
 
