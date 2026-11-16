@@ -27,8 +27,18 @@ unleash:
     # differs. See HARNESS.md's mutation-testing section for the
     # tagless-switch-under-reports pitfall before assuming a low number
     # means missing tests.
-    # Measured 2026-10-17 on task-interleaving's four domain packages
-    # (stationtrip, recommend, travel, policy): efficacy 100% and mutator
-    # coverage 100% in each, 0 lived mutants. Thresholds sit strictly below.
-    efficacy: 90
-    mutant-coverage: 90
+    # Measured 2026-11-15 per package (`make mutation`, the CI loop) and on
+    # ./internal/domain (`make mutation-full`), gremlins v0.6.0:
+    #   stationtrip: killed 76, lived 0, not covered 0 -> efficacy 100%, mutator coverage 100%
+    #   recommend:   killed 7,  lived 0, not covered 0 -> efficacy 100%, mutator coverage 100%
+    #   travel:      killed 14, lived 0, not covered 0 -> efficacy 100%, mutator coverage 100%
+    #   policy:      killed 29, lived 0, not covered 2 -> efficacy 100%, mutator coverage 93.55%
+    #   ./internal/domain aggregate: killed 126, lived 0, not covered 2 -> 100% / 98.44%
+    # The two policy survivors are the NOT COVERED mutants on the constant
+    # `MaxHintTTLSeconds = 1<<31 - 1` (policy.go:34); Go's cover tool does not
+    # instrument const declarations, see MUTATION.md. policy's 93.55% is the
+    # weakest package, so mutant-coverage sits at 93 (strictly below it).
+    # Plain numbers on purpose: a quoted value is read by gremlins v0.6.0 as 0
+    # and the gate would never fail.
+    efficacy: 99
+    mutant-coverage: 93
