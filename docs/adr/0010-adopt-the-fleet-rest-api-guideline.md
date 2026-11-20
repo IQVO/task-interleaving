@@ -8,6 +8,10 @@ transactional idempotency design the middleware keeps) and
 deployment). Implements the fleet standard "Warehouse REST API Guideline" (warehouse-docs); it is a
 breaking change that ships with the whole REST cutover set.
 
+> **2026-11-20 pointer.** [ADR 0013](0013-every-problem-type-has-a-replay-class.md) supersedes the "stored 2xx or
+> 4xx" of item 2: a refusal is stored only when its problem type is FINAL (or OUTCOME); a RETRYABLE refusal is not
+> stored and its key is released. The rest of this ADR stands.
+
 ## Context
 
 The 2026-10-30 application portfolio assessment found two spellings of the replay header, key reuse

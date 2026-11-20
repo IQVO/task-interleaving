@@ -207,28 +207,6 @@ func TestPostgresPolicyPutIsVersionGuarded(t *testing.T) {
 	}
 }
 
-// A 4xx answer rolls its unit of work back: the rejected request leaves no
-// row behind, and the rejection itself replays.
-func TestPostgresRejectionLeavesNoEffectAndReplays(t *testing.T) {
-	svc := bootPostgres(t) // no policy declared yet
-	status, body, _ := svc.simulate(t, simulation, "k-no-policy")
-	if status != http.StatusUnprocessableEntity || !strings.Contains(body, "/policy-not-declared") {
-		t.Fatalf("simulate without a policy = %d %s", status, body)
-	}
-	for _, table := range []string{"interleaving_policies", "hints", "station_trips", "outbox_events"} {
-		if n := svc.count(table); n != 0 {
-			t.Fatalf("%s has %d rows after a rejection", table, n)
-		}
-	}
-	svc.declare(t) // the world changed, the key still means the rejection
-	if status2, body2, hdr2 := svc.simulate(t, simulation, "k-no-policy"); status2 != status || body2 != body || hdr2.Get("Idempotency-Replayed") != "true" {
-		t.Fatalf("rejection replay differs or is not marked Idempotency-Replayed: %d %s %v", status2, body2, hdr2)
-	}
-	if n := svc.count("idempotency_keys"); n != 1 {
-		t.Fatalf("idempotency rows = %d, want the stored rejection only", n)
-	}
-}
-
 // Eight concurrent requests with one NEW key on real Postgres: every caller
 // gets the same answer, exactly one answer is stored, and the simulation wrote
 // nothing else (no hint, no station, no outbox row beyond the declaration).

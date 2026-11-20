@@ -45,11 +45,16 @@ var (
 //   - A new key runs the handler INSIDE one unit of work. A 2xx answer is saved
 //     in that same transaction, so the effects, their outbox rows and the
 //     stored answer commit or roll back together.
-//   - A 4xx answer rolls the unit of work back (a rejected request leaves no
-//     effect, and a Postgres transaction that hit a constraint is aborted
-//     anyway) and is then stored on its own, so the same key and body replay
-//     the same rejection. A 5xx answer is rolled back and NEVER stored, so
-//     the same key can retry the real work.
+//   - A refusal is handled by the replay class its problem type declares
+//     (replay_class.go, ADR 0013); the middleware holds no list of slugs. FINAL
+//     rolls the unit of work back (a rejected request leaves no effect, and a
+//     Postgres transaction that hit a constraint is aborted anyway) and is then
+//     stored on its own, so the same key and body replay the same rejection.
+//     OUTCOME commits the handler's writes with the stored answer, exactly as a
+//     2xx does. RETRYABLE, and a refusal with no class, rolls back and stores
+//     NOTHING: the key is released and a retry executes again, and a different
+//     body under that key is a new request. A 5xx answer is rolled back and
+//     NEVER stored, so the same key can retry the real work.
 //   - Two concurrent requests with one new key both run, but the store keeps
 //     the first writer's answer (ports.IdempotencyStore.Save): after saving, a
 //     request re-reads the key in its own transaction, and the one that finds
@@ -155,6 +160,24 @@ type capture struct {
 	header http.Header
 	code   int
 	body   bytes.Buffer
+	class  replayClass
+}
+
+// MarkReplay records the replay class of the problem the handler is about to
+// write (replayMarker): writeProblem calls it.
+func (c *capture) MarkReplay(class replayClass) { c.class = class }
+
+// keepsWrites reports whether the handler's writes commit with the stored
+// answer: a 2xx, or the OUTCOME refusal of a command that committed. A 5xx never.
+func (c *capture) keepsWrites() bool {
+	return c.code/100 == 2 || (c.code < http.StatusInternalServerError && c.class == replayOutcome)
+}
+
+// storesRefusal reports whether a refusal whose unit of work rolled back is
+// still stored on its own: only a FINAL one. A RETRYABLE, an unclassified and
+// a 5xx answer release the key.
+func (c *capture) storesRefusal() bool {
+	return c.code < http.StatusInternalServerError && c.class == replayFinal
 }
 
 func (c *capture) Header() http.Header { return c.header }
@@ -179,7 +202,7 @@ func (m *Idempotency) serveFresh(w http.ResponseWriter, r *http.Request, next ht
 	)
 	err := m.UoW.Do(r.Context(), func(ctx context.Context) error {
 		out = serveCaptured(next, r.WithContext(ctx))
-		if out.code >= http.StatusBadRequest {
+		if !out.keepsWrites() {
 			return errRollback
 		}
 		rec, err := m.record(key, fp, out)
@@ -255,13 +278,16 @@ func sameAnswer(a, b repository.IdempotencyRecord) bool {
 		bytes.Equal(a.Body, b.Body) && a.CreatedAt.Equal(b.CreatedAt)
 }
 
-// finishRejected answers a request whose unit of work was rolled back: a 5xx
-// goes out as it is and is never stored; a 4xx is stored on its own first so a
-// retry with the same key and body replays it. If another request stored an
-// answer for the key first (it won a race this one lost with a 4xx), that
-// answer is replayed instead.
+// finishRejected answers a request whose unit of work was rolled back: a FINAL
+// refusal is stored on its own first so a retry with the same key and body
+// replays it. Every other answer (a 5xx, a RETRYABLE or unclassified refusal)
+// goes out as it is and is never stored: the key row was never written, so the
+// key is released. A concurrent duplicate that was already running does not
+// wait for this request (there is no in-flight lock); it executes itself. If
+// another request stored an answer for the key first (it won a race this one
+// lost with a FINAL refusal), that answer is replayed instead.
 func (m *Idempotency) finishRejected(w http.ResponseWriter, r *http.Request, key, fp string, out *capture) {
-	if out.code >= http.StatusInternalServerError {
+	if !out.storesRefusal() {
 		flush(w, out)
 		return
 	}

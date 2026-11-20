@@ -69,24 +69,30 @@ are the catalogue in `internal/adapters/inbound/http/errors.go`.
 | 400 | `idempotency-key-required` | `POST /recommendations` without an `Idempotency-Key` | Send a unique key per logical request |
 | 400 | `idempotency-key-invalid` | `POST /recommendations` with an `Idempotency-Key` that is not 1 to 128 printable ASCII characters | Send a UUID |
 | 404 | `policy-not-found`, `hint-not-found`, `station-not-found` | Unknown resource. `policy-not-found` means the site is **inert**; `station-not-found` means no completion was ever recorded for it | Normal for a new site or station |
-| 409 | `concurrent-modification` | Two writers raced on one aggregate; the loser's version guard failed | Re-read and retry |
-| 409 | `idempotency-key-reused` | Same `Idempotency-Key` with a different method, path or body | A client bug, do not retry blindly: use a new key, or resend the original request to get the stored answer |
+| 409 | `concurrent-modification` | Two writers raced on one aggregate; the loser's version guard failed (RETRYABLE) | Re-read and retry |
+| 409 | `idempotency-key-reused` | Same `Idempotency-Key` with a different method, path or body, while a stored answer (a success or a FINAL refusal) exists for the key | A client bug, do not retry blindly: use a new key, or resend the original request to get the stored answer. A key released by a RETRYABLE refusal never answers this: a different body is a new request |
 | 412 | `version-mismatch` | `PUT /sites/{siteId}/policy` with a stale or missing `If-Match` on an existing policy, or with an `If-Match` on a site that has none; an `If-Match` that is not a version (`*`, `W/"1"`) also counts as stale | `GET` the policy and send its `ETag` as `If-Match` |
-| 422 | `policy-not-declared` | `POST /recommendations` for a site without a policy | Declare one |
+| 422 | `policy-not-declared` | `POST /recommendations` for a site without a policy (RETRYABLE: not stored, the key is released) | Declare one, then resend the same request with the same key |
 | 422 | `origin-unknown` | The origin location has no known geometry in the layout copy (`detail` names it) | Wait for or feed `LocationGeometryUpdated`; try another `fromLocation` |
-| 422 | `station-position-unknown` | No `fromLocation` given and the station has no recorded position | Send `fromLocation` |
+| 422 | `station-position-unknown` | No `fromLocation` given and the station has no recorded position (RETRYABLE: not stored, the key is released) | Send `fromLocation`, or retry once the station has completed a task |
 | 500 | `internal-error` | Unmapped error or handler panic; `detail` is always `an unexpected error occurred` | Read the `request failed` / `handler panicked` log line |
 | 503 | `dependency-unavailable` | `GET /readyz` only: Postgres or the Kafka broker (no broker answers a metadata request; topics are never checked) is not usable; `detail` is `not ready: ` plus the names | See the `/readyz` row under Boot and runtime |
 
 ### Idempotency in practice
 
 - Only `POST /recommendations` is wrapped; `PUT` and `GET` never need a key.
-- A key with a stored answer replays that answer byte for byte, whatever its
-  status (2xx and 4xx are stored), and adds the response header
-  `Idempotency-Replayed: true` (a first execution never carries it). A 5xx is
-  never stored, so the same key can retry real work.
+- A key with a stored answer replays that answer byte for byte and adds the
+  response header `Idempotency-Replayed: true` (a first execution never carries
+  it). A 2xx is stored; so is a refusal whose problem type is FINAL (a function
+  of the request alone: the `400`s). A RETRYABLE refusal (`policy-not-declared`,
+  `origin-unknown`, `station-position-unknown`, `concurrent-modification`, the
+  404s, `version-mismatch`) and a 5xx are never stored: the key is released and
+  the same request under the same key executes again; a different body under a
+  released key is a new request (ADR 0013).
 - The middleware runs the handler inside the unit of work and rolls it back on
-  a 4xx or 5xx; the 4xx answer is then stored on its own. Two concurrent
-  requests with one new key both run, and the first to store wins; the loser
-  rolls back and replays the winner's answer.
+  any refusal or 5xx; a FINAL refusal is then stored on its own. Two concurrent
+  requests with one new key both run (there is no in-flight lock), and the first
+  to store wins; the loser rolls back and replays the winner's answer. When the
+  first ends RETRYABLE nothing is stored and each copy is answered by its own
+  execution.
 - Nothing purges `idempotency_keys`, so a key is remembered indefinitely.

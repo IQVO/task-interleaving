@@ -25,3 +25,4 @@ one. The *Status* column is copied from each ADR's own `## Status` section.
 | [0010](/docs/adr/0010-adopt-the-fleet-rest-api-guideline) | Adopt the fleet REST API guideline | Accepted (2026-11-01) |
 | [0011](/docs/adr/0011-agent-authority-levels-and-complete-mcp-surface) | Agent authority levels and complete MCP surface | Accepted (2026-11-02) |
 | [0012](/docs/adr/0012-pick-a-first-class-interleaving-candidate) | PICK is a first-class interleaving candidate | Accepted (2026-11-05) |
+| [0013](/docs/adr/0013-every-problem-type-has-a-replay-class) | Every problem type has a replay class; a retryable refusal is not stored | Accepted (2026-11-20) |
