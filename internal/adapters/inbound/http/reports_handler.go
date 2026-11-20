@@ -79,12 +79,14 @@ func timingToDTO(t report.Timing) timingDTO {
 }
 
 var (
-	invalidReportRange = problem{status: http.StatusBadRequest, slug: "invalid-report-range",
-		title: "from and to must form a valid RFC 3339 range of at most 366 days"}
-	invalidReportGranularity = problem{status: http.StatusBadRequest, slug: "invalid-report-granularity",
-		title: "granularity must be \"day\""}
-	reportStoreError = problem{status: http.StatusInternalServerError, slug: "report-store-error",
-		title: "The report could not be served"}
+	// The reports binary has no Idempotency-Key route; its problems are
+	// classified like every other (ADR 0013).
+	invalidReportRange = newProblem(http.StatusBadRequest, "invalid-report-range",
+		"from and to must form a valid RFC 3339 range of at most 366 days", "", replayFinal)
+	invalidReportGranularity = newProblem(http.StatusBadRequest, "invalid-report-granularity",
+		"granularity must be \"day\"", "", replayFinal)
+	reportStoreError = newProblem(http.StatusInternalServerError, "report-store-error",
+		"The report could not be served", "", replayRetryable)
 )
 
 // handleHintAdoption serves the per-day adoption over ?from=&to=&siteId= and
