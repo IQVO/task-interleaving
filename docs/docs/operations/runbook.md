@@ -144,7 +144,10 @@ dead-lettered for that reason.
 There is one runtime: real Postgres and real Kafka
 ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). There is
 no in-memory mode, no consumer that is off by default and no optional relay.
-`Idempotency-Key` is required on `POST /recommendations` in every deployment,
+`Idempotency-Key` is required on `POST /recommendations` in every deployment
+(a success and a FINAL refusal are stored and replayed; a RETRYABLE refusal and
+a 5xx are not stored and the key stays free, so a stuck caller simply resends
+the same request with the same key, [ADR 0013](/docs/adr/0013-every-problem-type-has-a-replay-class)),
 the outbox and the relay are always on and `DATABASE_URL`, `KAFKA_BROKERS` and
 both consumer groups are mandatory (see
 [Configuration](/docs/operations/configuration)). The in-memory adapters exist

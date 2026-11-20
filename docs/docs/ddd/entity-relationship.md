@@ -172,7 +172,7 @@ a newer one has no event of its own and stays without a `consumed_at` or
 | `zones`, `locations` | event-fed read model | A location's site is found at read time through its zone, so zone, slot and geometry events may arrive in any order. `decommissioned` is irreversible and the row stays, so a late registration cannot bring the location back. The point `x_m/y_m/z_m` is all-or-nothing; a location with no point has an unknown distance. |
 | `processed_events` | consumer idempotency | `(consumer, event_id)` is claimed with `INSERT ... ON CONFLICT DO NOTHING` in the **same** transaction as the effect, so a rollback un-claims it. |
 | `outbox_events` | transactional outbox | One row per already-encoded Kafka message and destination topic; unique `(event_id, topic)`; partial index `idx_outbox_events_unpublished` keeps the relay's scan tiny. `attempts` and `last_error` carry the relay's failures. |
-| `idempotency_keys` | stored answers | Only 2xx and 4xx answers are stored (CHECK `status` 200 to 499), first writer wins. |
+| `idempotency_keys` | stored answers | Only 2xx and the 4xx of FINAL problem types are stored (CHECK `status` 200 to 499; a RETRYABLE refusal is not stored, ADR 0013), first writer wins. |
 
 The link from a policy to a trip is by site, not by a foreign key: `IssueHint`
 refuses a policy whose site is not the station's site (`ErrSiteMismatch`), and the

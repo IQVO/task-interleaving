@@ -206,7 +206,7 @@ operations over nine paths:
 | `GET` | `/hints` | List hints |
 | `GET` | `/hints/{hintId}` | Get one hint |
 | `GET` | `/stations/{stationId}` | A station's trip state |
-| `POST` | `/recommendations` | Rank the site's open tasks for a station that just completed one; issues the hint. **Requires an `Idempotency-Key` header** (a retry with the same key and request replays the original response, marked `Idempotency-Replayed: true`, instead of double-issuing; the same key with a different request is `409 idempotency-key-reused`) |
+| `POST` | `/recommendations` | Rank the site's open tasks for a station that just completed one; issues the hint. **Requires an `Idempotency-Key` header** (a retry with the same key and request replays the original response, marked `Idempotency-Replayed: true`, instead of double-issuing, when it was a success or a refusal that is final for the request (`400`); a refusal that depends on changeable state (`422 policy-not-declared`, `origin-unknown`, `station-position-unknown`) or a 5xx is not stored and the retry executes again; the same key with a different request is `409 idempotency-key-reused`; ADR 0013) |
 | `GET` | `/healthz` | Liveness |
 | `GET` | `/readyz` | Readiness — ready only while Postgres answers **and** a Kafka broker answers a metadata request (topics are not checked) |
 | `GET` | `/reports/hint-adoption` | Analytics report — served by `cmd/ti-reports`, not `cmd/api` |
