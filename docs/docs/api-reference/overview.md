@@ -58,10 +58,13 @@ for real responses.
   path or body is `409 idempotency-key-reused`; an equal request replays the
   stored answer with the response header `Idempotency-Replayed: true` (a first
   execution never carries it) when that answer was a success or a refusal that is
-  final for the request (the `400`s). A refusal that depends on state that can
-  change (`422 policy-not-declared`, `origin-unknown`, `station-position-unknown`)
-  and every 5xx are not stored: the key is released and the same request under the
-  same key executes again ([ADR 0013](/docs/adr/0013-every-problem-type-has-a-replay-class)).
+  final for the request (the `400`s), for 24 hours after it was stored (an older
+  answer is not replayed: the key is a new request again). A refusal that depends
+  on state that can change (`422 policy-not-declared`, `origin-unknown`,
+  `station-position-unknown`) and every 5xx are not stored: the key is released and
+  the same request under the same key executes again. A copy sent while the first
+  request is still in flight replays the first request's stored answer instead of
+  answering a refusal of its own ([ADR 0013](/docs/adr/0013-every-problem-type-has-a-replay-class)).
 - **Errors** are RFC 7807 `application/problem+json` with
   `type = https://errors.task-interleaving.warehouse-systems.dev/<slug>`. The slugs
   in the spec: `malformed-request`, `invalid-site-id`, `invalid-station-id`,

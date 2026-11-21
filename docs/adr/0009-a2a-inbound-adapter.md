@@ -7,7 +7,10 @@ read-only MCP adapter this one is modelled on and whose charter it inherits),
 [ADR 0004](0004-cloudevents-envelope-and-type-catalogue.md) (CloudEvents on every
 Kafka message) and [ADR 0006](0006-postgres-and-kafka-are-the-only-runtime.md)
 (Postgres and Kafka are the only runtime). Mirrors the fleet's A2A rollout
-(reference: workforce-management ADR 0039, wes-work-planning ADR 0046).
+(reference: workforce-management ADR 0039, wes-work-planning ADR 0046). Update 2026-11-21: `TestA2AServerIsReadOnly`
+and the MCP detectors it reused are replaced by the fleet's hardened read-only agent sensor,
+`TestAgentSurfacesAreReadOnly`, which covers both surfaces (`internal/architecture/agent_readonly_*`). The charter
+below is unchanged.
 Additive: the REST API, the MCP server, every payload and the outbox are
 unchanged.
 

@@ -7,6 +7,8 @@ warehouse-harness-template `docs/idempotency-replay-classes.md`, rule
 `.claude/rules/fleet/idempotency-and-outbox.md`). Supersedes one sentence of
 [ADR 0010](0010-adopt-the-fleet-rest-api-guideline.md) item 2 ("a stored 2xx or 4xx") and the "2xx and 4xx only" of
 the `idempotency_keys` row of [ADR 0005](0005-persistence-and-evaluation-semantics.md); the rest of both stands.
+Amended 2026-11-21 (fleet audit 2026-11-21, defect 1): an in-flight duplicate re-reads the key before an unstored
+answer, and a stored answer replays for 24 h only (see "Amendment 1" below).
 
 ## Context
 
@@ -59,7 +61,34 @@ Releasing a RETRYABLE key means a different body under the same key afterwards i
 **A concurrent duplicate when the first ends RETRYABLE.** There is no in-flight lock, so a duplicate that is already
 running executes itself and is answered with its own result (its own refusal, or a 2xx that it stores and that the
 first request's retry then replays). Nothing is stored for the refusals; a later retry runs again.
-(`TestConcurrentCopiesOfARetryableRefusalAreAllAnsweredAndNothingIsStored`.)
+(`TestConcurrentCopiesOfARetryableRefusalAreAllAnsweredAndNothingIsStored`.) A duplicate whose original has stored
+an answer by the time it answers replays that answer instead (Amendment 1).
+
+### Amendment 1 (2026-11-21): in-flight duplicates replay; the 24 h window
+
+**An unstored answer re-reads the key first.** Before the middleware answers an UNSTORED refusal (RETRYABLE,
+unclassified, or any 5xx) it reads the key again (`finishUnstored`, `idempotency.go`). Found: the request answers
+the stored answer with `Idempotency-Replayed: true` (another body: `409 idempotency-key-reused`); not found: its own
+refusal goes out and the key stays released. A failed re-read is logged at WARN and the request's own refusal goes
+out. N copies of one keyed request are one run and N-1 replays. This is the harness rule ("In-flight duplicates",
+`docs/idempotency-replay-classes.md`) in the shape of asrs-control #16 (material-flow-control `cab4359` +
+`f4b80e1`): the key Lookup runs before the unit of work and nothing holds the key while a request runs (the key row
+is written only after the handler), so a re-read at the start of the unit would run before the original commits and
+find nothing under READ COMMITTED. Re-reading before the unstored answer is the same as re-reading under a lock,
+because the refusal already rolled back every write.
+
+**Reachability today.** The audit row (a copy blocks on a hint's unique index, then answers `409
+concurrent-modification`) does NOT reproduce: `Recommend` writes nothing and takes no row lock (`usecases/recommend.go`;
+`hint_history.go` `insertHint` is reached only through `StationTripRepo.Save` from the consumers' `TripWriter`), so
+the only lock a copy can wait on is the idempotency key itself, after which `saveAndReread` already replays the
+original. `cmd/api` `TestPostgresAnInFlightDuplicateReplaysTheOriginalsAnswer` pins that over the real router and
+Postgres. The re-read makes the middleware correct for any keyed command that locks or writes inside its use case,
+and the harness template's `TestConcurrentDuplicateReplaysTheOriginalsStoredAnswer` (red without it) holds it.
+
+**The replay window.** A stored answer replays while it is at most 24 h old (`IdempotencyWindow`): `Lookup` ignores
+an older row and `Save` replaces it (`ON CONFLICT (key) DO UPDATE ... WHERE created_at < now - 24 h`), so past the
+window the same key is a new request, and another body under it is not `idempotency-key-reused`. The re-read honours
+the same window. Purging expired rows is still a follow-up (nothing deletes them).
 
 ### The classes (held equal to the catalogue by `TestTheADRDeclaresTheClassOfEveryProblemType`)
 
@@ -131,6 +160,13 @@ of the handlers goes through `writeProblem`.
   stored and replayed; the RETRYABLE `station-position-unknown` is released until the station completes a task and a
   different body under the released key is a new request; the FINAL `invalid-station-id` is stored and replayed.
   `concurrent-modification` cannot be provoked end to end on the keyed route (no version-guarded write).
+- Amendment 1: `idempotency_inflight_test.go` (a blind first Lookup stands for the copy that passed it while the
+  original was in flight: a RETRYABLE or 5xx re-run replays the stored 200, another body is
+  `idempotency-key-reused`; the re-read honours the window at exactly 24 h and not 1 µs later; a failed re-read is
+  logged at WARN); the template's `TestConcurrentDuplicateReplaysTheOriginalsStoredAnswer` over both wirings;
+  `idempotency_window_test.go` and `cmd/api` `TestPostgresAStoredAnswerReplaysOnlyWithinThe24HourWindow` (the window
+  over the memory and the Postgres store; the repository contract pins both stores); `cmd/api`
+  `TestPostgresAnInFlightDuplicateReplaysTheOriginalsAnswer` (the real route, above).
 
 ## Consequences
 
@@ -142,5 +178,5 @@ of the handlers goes through `writeProblem`.
   its own store. A released refusal means the same key may be tried again by whoever sent it, nothing more. No
   consumer-side or client-side retry is added here; a person-driven caller surfaces the refusal.
 - Follow-ups, not done here: split `version-mismatch` into a request-only and a state-dependent problem type;
-  nothing purges `idempotency_keys` and no age check applies on replay (runbook, "Nothing deletes rows"); the
+  nothing purges `idempotency_keys` (runbook, "Nothing deletes rows"; the age check on replay is Amendment 1); the
   `idempotency_keys` migration comment still reads "Only 2xx and 4xx answers are stored" (a migration is not edited).
