@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	inboundhttp "github.com/claudioed/task-interleaving/internal/adapters/inbound/http"
 	"github.com/claudioed/task-interleaving/internal/adapters/outbound/memory"
@@ -75,7 +76,7 @@ func newReplayOps(t *testing.T) replayOps {
 		Write:     func(_ context.Context, tag string) error { probe.add(tag); return nil },
 		Committed: func(_ *testing.T, tag string) int { return probe.count(tag) },
 		KeyRows: func(t *testing.T, key string) int {
-			_, found, err := store.Lookup(t.Context(), key)
+			_, found, err := store.Lookup(t.Context(), key, time.Time{}) // any age: a row is a row
 			must(t, err)
 			if found {
 				return 1

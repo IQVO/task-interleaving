@@ -39,8 +39,8 @@ func newParkingStore(next ports.IdempotencyStore) *parkingStore {
 	return s
 }
 
-func (s *parkingStore) Save(ctx context.Context, rec repository.IdempotencyRecord) error {
-	if err := s.IdempotencyStore.Save(ctx, rec); err != nil {
+func (s *parkingStore) Save(ctx context.Context, rec repository.IdempotencyRecord, notBefore time.Time) error {
+	if err := s.IdempotencyStore.Save(ctx, rec, notBefore); err != nil {
 		return err
 	}
 	if s.armed.CompareAndSwap(true, false) {

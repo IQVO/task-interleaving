@@ -109,12 +109,12 @@ func TestProcessedEventClaimIsOncePerConsumer(t *testing.T) {
 func TestIdempotencyStoreFirstWriterWins(t *testing.T) {
 	ctx := context.Background()
 	s := memory.NewIdempotencyStore()
-	if _, ok, _ := s.Lookup(ctx, "k"); ok {
+	if _, ok, _ := s.Lookup(ctx, "k", time.Time{}); ok {
 		t.Fatal("empty store found a key")
 	}
-	_ = s.Save(ctx, repository.IdempotencyRecord{Key: "k", Status: 200})
-	_ = s.Save(ctx, repository.IdempotencyRecord{Key: "k", Status: 422})
-	rec, ok, _ := s.Lookup(ctx, "k")
+	_ = s.Save(ctx, repository.IdempotencyRecord{Key: "k", Status: 200}, time.Time{})
+	_ = s.Save(ctx, repository.IdempotencyRecord{Key: "k", Status: 422}, time.Time{})
+	rec, ok, _ := s.Lookup(ctx, "k", time.Time{})
 	if !ok || rec.Status != 200 {
 		t.Fatalf("got %+v %v, want the first answer", rec, ok)
 	}

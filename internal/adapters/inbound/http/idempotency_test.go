@@ -191,7 +191,7 @@ func winnerAnswer(t *testing.T, ours repository.IdempotencyRecord) repository.Id
 func TestTheLoserOfARaceReplaysTheWinnersAnswer(t *testing.T) {
 	f := idempotentWorld(t)
 	f.store.beforeSave = func(rec repository.IdempotencyRecord) {
-		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec)))
+		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec), time.Time{}))
 	}
 	r := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-race")
 	if r.body["winner"] != true || r.header.Get(replayedHeader) != "true" {
@@ -202,7 +202,7 @@ func TestTheLoserOfARaceReplaysTheWinnersAnswer(t *testing.T) {
 func TestTheLoserOfARaceWithAFinalRefusalReplaysTheWinnersAnswer(t *testing.T) {
 	f := idempotentWorld(t)
 	f.store.beforeSave = func(rec repository.IdempotencyRecord) {
-		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec)))
+		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec), time.Time{}))
 	}
 	r := f.mustCall(t, http.MethodPost, recommendPath, blankStation, http.StatusOK, idemHeader, "k-race4")
 	if r.body["winner"] != true {
@@ -233,7 +233,7 @@ func TestConcurrentRequestsWithOneKeyShareOneAnswer(t *testing.T) {
 			t.Fatalf("answer %d differs: %s vs %s", i, a, answers[0])
 		}
 	}
-	stored, found, err := f.store.IdempotencyStore.Lookup(t.Context(), "k-same")
+	stored, found, err := f.store.IdempotencyStore.Lookup(t.Context(), "k-same", time.Time{})
 	must(t, err)
 	if !found || stored.Status != http.StatusOK {
 		t.Fatalf("stored = %+v found=%v", stored, found)
