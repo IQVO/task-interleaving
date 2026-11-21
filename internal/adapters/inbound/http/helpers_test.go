@@ -129,14 +129,14 @@ type faultyStore struct {
 	saves      atomic.Int32
 }
 
-func (s *faultyStore) Lookup(ctx context.Context, key string) (repository.IdempotencyRecord, bool, error) {
+func (s *faultyStore) Lookup(ctx context.Context, key string, notBefore time.Time) (repository.IdempotencyRecord, bool, error) {
 	if err := s.lookupFail.get(); err != nil {
 		return repository.IdempotencyRecord{}, false, err
 	}
-	return s.IdempotencyStore.Lookup(ctx, key)
+	return s.IdempotencyStore.Lookup(ctx, key, notBefore)
 }
 
-func (s *faultyStore) Save(ctx context.Context, rec repository.IdempotencyRecord) error {
+func (s *faultyStore) Save(ctx context.Context, rec repository.IdempotencyRecord, notBefore time.Time) error {
 	s.saves.Add(1)
 	if err := s.saveFail.get(); err != nil {
 		return err
@@ -144,7 +144,7 @@ func (s *faultyStore) Save(ctx context.Context, rec repository.IdempotencyRecord
 	if s.beforeSave != nil {
 		s.beforeSave(rec)
 	}
-	return s.IdempotencyStore.Save(ctx, rec)
+	return s.IdempotencyStore.Save(ctx, rec, notBefore)
 }
 
 // world is what the consumers (step 5) feed: the in-memory ports the tests seed.

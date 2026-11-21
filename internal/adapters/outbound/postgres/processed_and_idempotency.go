@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,13 +51,14 @@ func NewIdempotencyStore(pool *pgxpool.Pool) *IdempotencyStore {
 	return &IdempotencyStore{pool: pool}
 }
 
-// Lookup implements ports.IdempotencyStore.
-func (s *IdempotencyStore) Lookup(ctx context.Context, key string) (repository.IdempotencyRecord, bool, error) {
+// Lookup implements ports.IdempotencyStore: a row created before notBefore is
+// outside the replay window and not found.
+func (s *IdempotencyStore) Lookup(ctx context.Context, key string, notBefore time.Time) (repository.IdempotencyRecord, bool, error) {
 	rec := repository.IdempotencyRecord{Key: key}
 	err := queryFor(ctx, s.pool).QueryRow(ctx, `
 		SELECT fingerprint, status, content_type, body, created_at
-		FROM idempotency_keys WHERE key = $1
-	`, key).Scan(&rec.Fingerprint, &rec.Status, &rec.ContentType, &rec.Body, &rec.CreatedAt)
+		FROM idempotency_keys WHERE key = $1 AND created_at >= $2
+	`, key, notBefore.UTC()).Scan(&rec.Fingerprint, &rec.Status, &rec.ContentType, &rec.Body, &rec.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return repository.IdempotencyRecord{}, false, nil
 	}
@@ -68,13 +70,18 @@ func (s *IdempotencyStore) Lookup(ctx context.Context, key string) (repository.I
 }
 
 // Save implements ports.IdempotencyStore: the first writer of a key wins and a
-// later Save of the same key changes nothing.
-func (s *IdempotencyStore) Save(ctx context.Context, rec repository.IdempotencyRecord) error {
+// later Save of the same key changes nothing, unless the stored row was
+// created before notBefore (outside the replay window): then it is replaced.
+// A concurrent Save of the same key blocks on the key until the other
+// transaction ends, then re-checks the WHERE against the row it committed.
+func (s *IdempotencyStore) Save(ctx context.Context, rec repository.IdempotencyRecord, notBefore time.Time) error {
 	_, err := queryFor(ctx, s.pool).Exec(ctx, `
 		INSERT INTO idempotency_keys (key, fingerprint, status, content_type, body, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (key) DO NOTHING
-	`, rec.Key, rec.Fingerprint, rec.Status, rec.ContentType, nonNilBytes(rec.Body), rec.CreatedAt.UTC())
+		ON CONFLICT (key) DO UPDATE SET fingerprint = EXCLUDED.fingerprint, status = EXCLUDED.status,
+			content_type = EXCLUDED.content_type, body = EXCLUDED.body, created_at = EXCLUDED.created_at
+		WHERE idempotency_keys.created_at < $7
+	`, rec.Key, rec.Fingerprint, rec.Status, rec.ContentType, nonNilBytes(rec.Body), rec.CreatedAt.UTC(), notBefore.UTC())
 	if err != nil {
 		return fmt.Errorf("save idempotency key: %w", err)
 	}

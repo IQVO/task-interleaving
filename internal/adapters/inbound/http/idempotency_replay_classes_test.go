@@ -24,7 +24,8 @@
 // Fleet rule: .claude/rules/fleet/idempotency-and-outbox.md. Standard and adoption steps:
 // docs/idempotency-replay-classes.md (warehouse-harness-template). A real store (testcontainers)
 // is the strongest wiring for key-in-transaction designs; an in-memory one is enough for a
-// design whose store is behind a port.
+// design whose store is behind a port. TestConcurrentDuplicateReplaysTheOriginalsStoredAnswer sends
+// requests from several goroutines, so the store behind the closures must be safe for concurrent use.
 //
 // Local change against the template: TestEveryProblemTypeIsReplayedOrReExecutedByItsClass is split into
 // checkFirstAnswer / checkSecondAnswer so it stays under the repo's gocognit and nestif limits; every
@@ -37,7 +38,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // Replay classes, as the catalogue entry declares them. The empty string is "unclassified".
@@ -131,12 +134,7 @@ func succeeding(a replayAdapter, tag string) answerFn {
 
 func post(t *testing.T, h http.Handler, key, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, route, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(idempotencyKeyHeader, key)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec
+	return serve(h, key, body)
 }
 
 func firstOf(t *testing.T, a replayAdapter, class string) problemEntry {
@@ -445,6 +443,167 @@ func TestPanicIsNotStored(t *testing.T) {
 	if retry := post(t, mw, "k-panic", `{"n":1}`); h.calls != 2 || retry.Code != http.StatusCreated {
 		t.Errorf("retry = %d calls=%d, want a fresh 201 after 2 calls", retry.Code, h.calls)
 	}
+}
+
+// (d) An IN-FLIGHT duplicate replays the original's answer (fleet carry P3-R15b / P4-R16). A copy of
+// a keyed request (same key, same body) that passes the key lookup while the original is still in
+// flight waits for it (on the key, or on an aggregate lock inside the use case) and, once the
+// original committed, must answer the original's STORED answer: N copies are one run and N-1
+// replays. The defect this kills: the copy re-runs the use case, the state the original committed
+// makes that re-run a RETRYABLE refusal, which is not stored, and the copy answers that refusal
+// instead of the original's 201. Fixes: re-read the key before answering an unstored refusal
+// (material-flow-control cab4359, finishRefused), or take the key lock at the start of the unit and
+// re-read there (amr-fleet-control b8d0026). A design that claims the key row inside the request
+// transaction before the handler passes as it is: its copies wait on the key and replay.
+//
+// The original's handler holds the "lock" until every copy has entered the handler or
+// inFlightGrace has passed (a design that blocks copies on the key never lets them in); each copy
+// that does reach the handler waits until the original has answered, then refuses with the
+// catalogue's first RETRYABLE entry, as a re-run against the original's committed state would. One
+// copy carries another body: it must answer the reuse conflict, not its own refusal. The closures
+// are called from several goroutines here, so the wiring's store must be safe for concurrent use
+// (a real Postgres is; an in-memory fake needs its own mutex).
+//
+// Mutant it must kill: delete the re-read (before the unstored refusal, or at the start of the
+// unit) and the copies answer the RETRYABLE status unreplayed; the harness selftest runs that
+// mutant (TOY_MUTATION=no-reread) over both fix shapes.
+func TestConcurrentDuplicateReplaysTheOriginalsStoredAnswer(t *testing.T) {
+	a := newReplayAdapter(t)
+	e := firstOf(t, a, classRetryable)
+	if e.Slug == "" {
+		t.Fatal("the catalogue has no RETRYABLE entry below 500")
+	}
+	h := newInFlightHandler(a, e, inFlightCopies)
+	mw := a.Middleware(t, h)
+	const key, body = "k-inflight", `{"n":1}`
+
+	first, copies := sendInFlight(t, h, mw, key, body)
+	if first.Code != http.StatusCreated || replayed(first) {
+		t.Fatalf("original = %d replayed=%v %q, want a fresh 201", first.Code, replayed(first), first.Body.String())
+	}
+	for i, rec := range copies[:len(copies)-1] {
+		if rec.Code != http.StatusCreated || !replayed(rec) || rec.Body.String() != first.Body.String() {
+			t.Errorf("in-flight copy %d = %d replayed=%v %q, want the original's stored 201 replayed (not its own %d %s re-run)",
+				i, rec.Code, replayed(rec), rec.Body.String(), e.Status, e.Slug)
+		}
+	}
+	if other := copies[len(copies)-1]; other.Code != http.StatusConflict || !strings.Contains(other.Body.String(), keyReusedSlug) {
+		t.Errorf("in-flight copy with another body = %d %q, want 409 %s", other.Code, other.Body.String(), keyReusedSlug)
+	}
+	if got := a.Committed(t, "inflight-original"); got != 1 {
+		t.Errorf("committed writes of the original = %d, want 1: one run", got)
+	}
+	if got := a.KeyRows(t, key); got != 1 {
+		t.Errorf("key rows = %d, want 1: the original's answer is stored once", got)
+	}
+	if rep := post(t, mw, key, body); rep.Code != http.StatusCreated || !replayed(rep) {
+		t.Errorf("a later copy = %d replayed=%v, want the stored 201 replayed", rep.Code, replayed(rep))
+	}
+}
+
+// sendInFlight sends the original, waits until it is inside the handler, sends inFlightCopies copies
+// (the last with another body), lets the original finish and returns every answer.
+func sendInFlight(t *testing.T, h *inFlightHandler, mw http.Handler, key, body string) (*httptest.ResponseRecorder, []*httptest.ResponseRecorder) {
+	t.Helper()
+	original := make(chan *httptest.ResponseRecorder, 1)
+	go func() { original <- serve(mw, key, body) }()
+	select {
+	case <-h.originalEntered:
+	case <-time.After(inFlightTimeout):
+		t.Fatal("the original request never reached the handler")
+	}
+	copies := make([]*httptest.ResponseRecorder, h.copies)
+	var wg sync.WaitGroup
+	for i := range copies {
+		b := body
+		if i == len(copies)-1 {
+			b = `{"n":2}` // the in-flight copy with another body
+		}
+		wg.Add(1)
+		go func(i int, b string) {
+			defer wg.Done()
+			copies[i] = serve(mw, key, b)
+		}(i, b)
+	}
+	h.awaitCopies(inFlightGrace)
+	close(h.release)
+	first := <-original
+	close(h.originalAnswered)
+	wg.Wait()
+	return first, copies
+}
+
+const (
+	inFlightCopies  = 3 // copies sent while the original is in flight; the last carries another body
+	inFlightGrace   = 250 * time.Millisecond
+	inFlightTimeout = 10 * time.Second // a bound so a broken middleware fails instead of hanging
+)
+
+// inFlightHandler: call 0 is the original (waits on release, writes, answers 201); every later call
+// is a copy that reached the handler (waits until the original answered, then refuses with e).
+type inFlightHandler struct {
+	a                replayAdapter
+	e                problemEntry
+	mu               sync.Mutex
+	calls            int
+	originalEntered  chan struct{}
+	copyEntered      chan struct{}
+	copies           int
+	release          chan struct{}
+	originalAnswered chan struct{}
+}
+
+func newInFlightHandler(a replayAdapter, e problemEntry, copies int) *inFlightHandler {
+	return &inFlightHandler{a: a, e: e, copies: copies, originalEntered: make(chan struct{}),
+		copyEntered: make(chan struct{}, copies), release: make(chan struct{}), originalAnswered: make(chan struct{})}
+}
+
+func (h *inFlightHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	i := h.calls
+	h.calls++
+	h.mu.Unlock()
+	if i == 0 {
+		close(h.originalEntered)
+		waitOrTimeout(h.release)
+		succeeding(h.a, "inflight-original")(w, r)
+		return
+	}
+	select {
+	case h.copyEntered <- struct{}{}:
+	default:
+	}
+	waitOrTimeout(h.originalAnswered)
+	refusing(h.a, h.e, "inflight-copy")(w, r)
+}
+
+// awaitCopies returns once every copy entered the handler or grace has passed.
+func (h *inFlightHandler) awaitCopies(grace time.Duration) {
+	deadline := time.After(grace)
+	for n := 0; n < h.copies; n++ {
+		select {
+		case <-h.copyEntered:
+		case <-deadline:
+			return
+		}
+	}
+}
+
+func waitOrTimeout(c <-chan struct{}) {
+	select {
+	case <-c:
+	case <-time.After(inFlightTimeout):
+	}
+}
+
+// serve sends one keyed POST; post is its *testing.T twin (the in-flight goroutines call serve).
+func serve(h http.Handler, key, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, route, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(idempotencyKeyHeader, key)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -78,7 +78,9 @@ in sync by hand.
   (`inputs_test.go`) and the completion path (`completion_station_test.go`).
 - **HTTP adapter**: `httptest` over the real router, one file per handler group
   plus `idempotency_test.go` (replay, reuse, FINAL stored and RETRYABLE released, rollback on 4xx and 5xx, concurrent
-  first writers), `idempotency_classes_test.go` (the ADR 0013 table equals the catalogue, problems are built only by
+  first writers), `idempotency_inflight_test.go` (an in-flight copy that decides an unstored refusal replays the stored
+  answer, within the 24 h window; a failed re-read is logged at WARN), `idempotency_window_test.go` (a stored answer
+  replays for 24 h and not 1 µs longer), `idempotency_classes_test.go` (the ADR 0013 table equals the catalogue, problems are built only by
   `newProblem`, no OUTCOME) and the harness template `idempotency_replay_classes_test.go` over an in-memory wiring (and over
   Postgres in the integration job), `health_test.go` and `shape_test.go`, which walks the OpenAPI
   schema and checks that the responses have exactly the documented shape.
@@ -138,7 +140,7 @@ Postgres, and a missing Docker is a test failure, never a skip.
 
 | Suite | Package | What it proves |
 | --- | --- | --- |
-| Service over Postgres | `cmd/api` (6) | boot migrates, `Idempotency-Key` is enforced, the simulation writes no outbox row, policy `PUT` is version guarded, a RETRYABLE refusal leaves no row and its key retries, a FINAL one is stored and replays, concurrent requests with one key store one answer, the expiry worker expires a hint and enqueues the fact, boot **fails closed** on an unreachable database |
+| Service over Postgres | `cmd/api` (6) | boot migrates, `Idempotency-Key` is enforced, the simulation writes no outbox row, policy `PUT` is version guarded, a RETRYABLE refusal leaves no row and its key retries, a FINAL one is stored and replays, concurrent requests with one key store one answer, an in-flight copy blocked on the original's key replays its answer (`TestPostgresAnInFlightDuplicateReplaysTheOriginalsAnswer`), a stored answer replays for 24 h and is then replaced, the expiry worker expires a hint and enqueues the fact, boot **fails closed** on an unreachable database |
 | Real entry point | `cmd/api/e2e_integration_test.go` (2) | `run()` is booted in-process on real Postgres and a real Kafka whose topic auto-creation is **off**: `/readyz` is `200` while none of the four topics exists (topics are not part of readiness, ADR 0006 Amendment 1), then the test creates them; layout, policy, task and completion events published to Kafka produce an `InterleavingHintIssued` ranked by detour (read from REST, Postgres and the produced topic); a claim of the top candidate consumes the hint; a restart halfway and a full replay lose and duplicate nothing; the service stays alive but not ready while Kafka is unreachable |
 | Repositories and contract | `outbound/postgres` (36) | the repository contract suite (`internal/testing/repocontract`) for policies, trips, task pool, location book, processed events and the idempotency store; one Active hint per station even under racing issuers; version-guarded policy writes under races; unit-of-work rollback and nesting; outbox ordering, retry, attempt cap and trace-context headers; migrations apply, re-run as a no-op, every `down` restores the previous schema, and run from the unpooled URL only |
 | Outbox relay | `outbound/outbox` (8) | exact envelopes published for issued/consumed/expired, crash and restart without duplicates, a crash between send and mark republishes the **same id**, the attempt cap excludes a poison row, re-arming claims it again, no cap lets a poison row block later rows |

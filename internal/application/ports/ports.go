@@ -102,9 +102,11 @@ type ProcessedEvents interface {
 // IdempotencyStore keeps the answers of POSTs made with an Idempotency-Key.
 // The HTTP adapter stores 2xx and 4xx answers only, never 5xx.
 type IdempotencyStore interface {
-	// Lookup returns the stored answer for the key.
-	Lookup(ctx context.Context, key string) (repository.IdempotencyRecord, bool, error)
+	// Lookup returns the stored answer for the key, unless it was created
+	// before notBefore (the replay window): an older answer is not found.
+	Lookup(ctx context.Context, key string, notBefore time.Time) (repository.IdempotencyRecord, bool, error)
 	// Save stores the answer; the first writer of a key wins and a later Save
-	// of the same key changes nothing.
-	Save(ctx context.Context, rec repository.IdempotencyRecord) error
+	// of the same key changes nothing, unless the stored row was created
+	// before notBefore: an expired answer is replaced.
+	Save(ctx context.Context, rec repository.IdempotencyRecord, notBefore time.Time) error
 }

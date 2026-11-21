@@ -295,7 +295,9 @@ sweep time.
 - **Nothing deletes rows.** No code issues a `DELETE`: `outbox_events` keeps
   its published rows, `idempotency_keys` and `processed_events` grow with
   traffic, and `hints` is the permanent hint history. `idempotency_keys` has an
-  index on `created_at` for a future cleanup job, but there is none. Plan table
+  index on `created_at` for a future cleanup job, but there is none. A stored
+  answer replays for 24 h only (ADR 0013 amendment): an older row is ignored and
+  replaced by the key's next answer, but it is not deleted. Plan table
   maintenance outside the service.
 
 ## Routine procedures

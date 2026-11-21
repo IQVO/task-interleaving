@@ -166,7 +166,8 @@ The tests run on every PR (`arch-test` job, `make arch-test`):
 | --- | --- |
 | `TestHexagonalArchitecture` (6 subtests) | `**.internal.domain.**` depends only on domain; `**.internal.application.**` only on domain and application; inbound adapters do not depend on outbound adapters and vice versa; nothing under `internal/` imports `cmd`; `internal/application/ports` holds only interfaces. |
 | `TestMCPAdapterDependencyRule` | An MCP adapter, if added, depends only on application and domain, and nothing depends on it. |
-| `TestA2AAdapterDependencyRule`, `TestA2AServerIsReadOnly`, `TestNoOutboundA2AClient` | The A2A adapter depends only on application and domain, nothing depends on it, it and `cmd/a2a` reach only read use cases (no ports, outbox, event sink, Kafka or write use case), and no file imports the A2A client: this context is delegated to and never delegates. |
+| `TestA2AAdapterDependencyRule`, `TestNoOutboundA2AClient` | The A2A adapter depends only on application and domain, nothing depends on it, and no file imports the A2A client: this context is delegated to and never delegates. |
+| `TestAgentSurfacesAreReadOnly`, `TestEveryAgentSurfaceMustBeBuilt`, `TestAgentReadOnlySensorBites`, `TestAgentReadOnlySensorRefusesWriteMethodsAndRawDrivers` (+ this module's bite fixtures in `agent_readonly_hardening_test.go`) | The fleet's hardened read-only agent sensor (harness `templates/architecture/agent_readonly_*`, config in `agent_readonly_config_test.go`) over the MCP and A2A adapters and `cmd/mcp`, `cmd/a2a`: `usecases`, `ports` and `postgres` are resolved by import path (no alias, no dot import) and referenced only for their read identifiers; no write method (`Save`, `Do`, `Claim`, `SaveZone`, ...) or raw SQL (`Exec`, `Query`, `Begin`, ...) is selected on any value; no `pgx` or `database/sql` import; no Kafka, outbox, event sink, expiry worker, REST or sibling agent adapter import. |
 | `TestNoAuthMiddlewareReintroduced` | No `"Bearer "`, `golang-jwt/jwt`, `dgrijalva/jwt-go` or `lestrrat-go/jwx` in non-comment source under `internal/adapters/inbound`: REST is unauthenticated fleet-wide. |
 | `TestKafkaConsumerGroupNeverHardcodedInline` | No `GroupID: "literal"`; the group id comes from `FULFILLMENT_CONSUMER_GROUP` / `LAYOUT_CONSUMER_GROUP`. |
 | `TestRuntimeBinaryHasNoInMemoryAdapters`, `TestRuntimeBinarySensorBites` | No non-test file under `cmd/**` imports `internal/adapters/outbound/memory`: the binary runs on Postgres and Kafka only (ADR 0006). The second test proves the detector flags plain, aliased, blank, dot and nested imports. |
@@ -179,6 +180,6 @@ The tests run on every PR (`arch-test` job, `make arch-test`):
 | `TestEventCatalogueMatchesContract` | Every full CloudEvents type that `apis/asyncapi.yaml` declares for this service appears in the CloudEvents ADR (`docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`). |
 | `TestKafkaIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationTestsUseTestcontainers` | `*_integration_test.go` files boot their own broker or database; no `KAFKA_BROKERS` / `DATABASE_URL` gate, no `localhost:9092`. |
 
-`TestMCPServerIsReadOnly` pins the MCP adapter to the read use cases and
+`TestAgentSurfacesAreReadOnly` pins the MCP and A2A adapters to the read use cases and
 `TestMCPOptionalToolInputsCarryOmitempty` now scans the real MCP tool inputs; no
 sensor skips. Details and commands are on [Testing](/docs/development/testing).
