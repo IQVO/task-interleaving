@@ -112,6 +112,17 @@ func bootPostgres(t *testing.T) pgService {
 // inject a fault) before the server is built over them.
 func bootPostgresWith(t *testing.T, wrap func(*adapters)) pgService {
 	t.Helper()
+	return bootPostgresOver(t, func(ad *adapters, _ string) {
+		if wrap != nil {
+			wrap(ad)
+		}
+	})
+}
+
+// bootPostgresOver is bootPostgresWith whose hook also gets the database URL
+// (to build an adapter over its own pool, e.g. a decorated idempotency store).
+func bootPostgresOver(t *testing.T, wrap func(ad *adapters, url string)) pgService {
+	t.Helper()
 	url := pgtest.EmptyURL(t)
 	ad, closeAdapters, err := buildAdapters(t.Context(), url, url, discardLogger())
 	if err != nil {
@@ -121,11 +132,28 @@ func bootPostgresWith(t *testing.T, wrap func(*adapters)) pgService {
 	pool := pgtest.Open(t, url)
 	seedWorld(t, ad)
 	if wrap != nil {
-		wrap(&ad)
+		wrap(&ad, url)
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(buildServer(ad, &inboundhttp.Readiness{}, nil)))
 	t.Cleanup(srv.Close)
 	return pgService{srv: srv, ad: ad, count: func(table string) int { return pgtest.Count(t, pool, table) }}
+}
+
+// awaitLockWaiters waits until n backends of the service's database wait on a
+// lock (pg_stat_activity), and fails naming what it saw instead.
+func (s pgService) awaitLockWaiters(t *testing.T, n int) {
+	t.Helper()
+	const waiting = "pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+	deadline := time.Now().Add(15 * time.Second)
+	seen := 0
+	for time.Now().Before(deadline) {
+		if seen = s.count(waiting); seen >= n {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("lock waiters = %d after 15s, want %d (active backends: %d)", seen, n,
+		s.count("pg_stat_activity WHERE datname = current_database() AND state = 'active'"))
 }
 
 func (s pgService) declare(t *testing.T) {
