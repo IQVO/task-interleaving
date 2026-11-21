@@ -190,4 +190,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerFlowSteps(sc, w)
 	registerAssertionSteps(sc, w)
 	registerRulesSteps(sc, w)
+	registerDocRulesSteps(sc, w)
 }
