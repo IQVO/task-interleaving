@@ -242,7 +242,7 @@ func problemFromUseCase(err error) *problem {
 		return restProblem(http.StatusNotFound, "station-not-found", "Station not found",
 			"no completion has been recorded for the station")
 	default:
-		slog.Error("a2a skill failed", "error", err)
+		slog.Error("a2a skill failed", "error", logReplacer.Replace(err.Error()))
 		return restProblem(http.StatusInternalServerError, "internal-error", "Internal server error",
 			"the skill failed; see server logs (trace id in the response metadata)")
 	}
