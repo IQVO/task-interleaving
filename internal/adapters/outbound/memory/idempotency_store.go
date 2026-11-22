@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -40,4 +41,29 @@ func (s *IdempotencyStore) Save(_ context.Context, rec repository.IdempotencyRec
 		s.rows[rec.Key] = rec
 	}
 	return nil
+}
+
+// PurgeExpired implements ports.IdempotencyStore: the answers created before
+// notBefore are deleted oldest first, at most limit of them, and the count is
+// returned (ADR 0013, Amendment 2).
+func (s *IdempotencyStore) PurgeExpired(_ context.Context, notBefore time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expired := make([]string, 0, len(s.rows))
+	for key, rec := range s.rows {
+		if rec.CreatedAt.Before(notBefore) {
+			expired = append(expired, key)
+		}
+	}
+	slices.SortFunc(expired, func(a, b string) int { return s.rows[a].CreatedAt.Compare(s.rows[b].CreatedAt) })
+	if len(expired) > limit {
+		expired = expired[:limit]
+	}
+	for _, key := range expired {
+		delete(s.rows, key)
+	}
+	return len(expired), nil
 }

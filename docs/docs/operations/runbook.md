@@ -292,13 +292,17 @@ sweep time.
   statement timeout. Size `max_connections` (or the pooler) as 10 per replica.
 - **No autoscaling configuration exists** (no chart, no HPA). The hot path is
   `POST /recommendations`, a read-only computation over the site's open tasks.
-- **Nothing deletes rows.** No code issues a `DELETE`: `outbox_events` keeps
-  its published rows, `idempotency_keys` and `processed_events` grow with
-  traffic, and `hints` is the permanent hint history. `idempotency_keys` has an
-  index on `created_at` for a future cleanup job, but there is none. A stored
-  answer replays for 24 h only (ADR 0013 amendment): an older row is ignored and
-  replaced by the key's next answer, but it is not deleted. Plan table
-  maintenance outside the service.
+- **Idempotency keys are purged hourly.** The retention worker (always on,
+  `cmd/api/retention.go`) deletes the `idempotency_keys` rows older than the
+  24 h replay window: one pass at start, then one every hour, at most 500
+  rows per statement (`FOR UPDATE SKIP LOCKED`, so a row a request holds is
+  skipped and nothing waits on anything; ADR 0013 Amendment 2). Expiry is
+  still enforced at read — an expired row never answers — the purge only
+  stops the table growing, and a failed pass is retried at the next tick.
+- **Nothing else deletes rows.** No code issues another `DELETE`:
+  `outbox_events` keeps its published rows, `processed_events` grows with
+  traffic, and `hints` is the permanent hint history. Plan table maintenance
+  for those outside the service.
 
 ## Routine procedures
 

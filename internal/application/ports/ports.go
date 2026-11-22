@@ -109,4 +109,11 @@ type IdempotencyStore interface {
 	// of the same key changes nothing, unless the stored row was created
 	// before notBefore: an expired answer is replaced.
 	Save(ctx context.Context, rec repository.IdempotencyRecord, notBefore time.Time) error
+	// PurgeExpired deletes up to limit answers created before notBefore
+	// (outside the replay window), oldest first, and returns how many were
+	// deleted; a result below limit means nothing expired is left. Expiry
+	// stays enforced at read (Lookup): the purge only stops the table
+	// growing, and it never deletes an answer the window still replays nor
+	// waits on a row a request holds (ADR 0013, Amendment 2).
+	PurgeExpired(ctx context.Context, notBefore time.Time, limit int) (deleted int, err error)
 }
