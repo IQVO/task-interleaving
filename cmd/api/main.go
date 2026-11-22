@@ -1,6 +1,7 @@
 // Command api is task-interleaving's composition root: it wires env config
 // into adapters, adapters into use cases, and use cases into the HTTP router,
-// the two Kafka consumers, the hint-expiry worker and the outbox relay.
+// the two Kafka consumers, the hint-expiry worker, the idempotency retention
+// purge and the outbox relay.
 // Nothing else in the module imports it.
 //
 // Postgres and Kafka are the ONLY runtime (ADR 0006): there is no in-memory
@@ -99,10 +100,13 @@ func run(ctx context.Context) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	// Stop order: the consumers go first (they enqueue outbox rows while they
-	// drain), then the expiry worker (it enqueues rows too), and the relay
-	// last so nothing committed before it is stranded.
+	// drain), then the expiry worker (it enqueues rows too), then the
+	// idempotency retention purge (it commits only deletions of expired key
+	// rows and owns no outbox row), and the relay last so nothing committed
+	// before it is stranded.
 	workers := startConsumers(ad, cfg.brokers, cfg.consumers, logger)
 	workers = append(workers, startExpiryWorker(ad.expireHints(), cfg.expiryEvery, logger))
+	workers = append(workers, startIdempotencyPurge(ad.idempotencyStore, ad.clock, logger))
 	relay, err := startOutboxRelay(ad.outbox, cfg.brokers, logger)
 	if err != nil {
 		stopWorkers(logger, workers)
@@ -114,9 +118,9 @@ func run(ctx context.Context) error {
 // serveUntilSignal runs httpServer until SIGINT/SIGTERM, until ctx is
 // cancelled, or until a listen error, then shuts down in the fleet order: (1)
 // /readyz flips to 503, (2) wait the drain delay, (3) drain HTTP, (4) stop and
-// await the workers in the order given (consumers, expiry worker, relay LAST so
-// nothing committed above is stranded); the caller's deferred pool.Close runs
-// after all of it.
+// await the workers in the order given (consumers, expiry worker, idempotency
+// retention purge, relay LAST so nothing committed above is stranded); the
+// caller's deferred pool.Close runs after all of it.
 func serveUntilSignal(ctx context.Context, logger *slog.Logger, httpServer *http.Server, readiness *inboundhttp.Readiness, workers []*worker) error {
 	errCh := make(chan error, 1)
 	go func() {

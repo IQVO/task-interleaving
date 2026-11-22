@@ -39,6 +39,9 @@ type adapters struct {
 	outbox outboxrelay.Store
 	// idempotency is the Idempotency-Key middleware of the POST.
 	idempotency func(http.Handler) http.Handler
+	// idempotencyStore is the middleware's key store and the retention
+	// purge's: both see the same rows of the same database.
+	idempotencyStore ports.IdempotencyStore
 	// ping is the Postgres liveness check behind /readyz.
 	ping func(context.Context) error
 }
@@ -77,16 +80,18 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsURL string, logge
 
 func postgresAdapters(pgPool *pgxpool.Pool) adapters {
 	ob := postgres.NewOutboxRepo(pgPool)
+	idempotencyStore := postgres.NewIdempotencyStore(pgPool)
 	ad := adapters{
 		policies: postgres.NewPolicyRepo(pgPool), trips: postgres.NewStationTripRepo(pgPool),
 		pool: postgres.NewTaskPool(pgPool), book: postgres.NewLocationBook(pgPool),
 		events: events.NewSink(ob), uow: postgres.NewUnitOfWork(pgPool),
 		clock: system.Clock{}, ids: system.RandomIDs{},
-		processed: postgres.NewProcessedEventRepo(pgPool),
-		outbox:    ob,
-		ping:      pgPool.Ping,
+		processed:        postgres.NewProcessedEventRepo(pgPool),
+		outbox:           ob,
+		idempotencyStore: idempotencyStore,
+		ping:             pgPool.Ping,
 	}
-	ad.idempotency = inboundhttp.NewIdempotency(postgres.NewIdempotencyStore(pgPool), ad.uow, ad.clock).Middleware
+	ad.idempotency = inboundhttp.NewIdempotency(idempotencyStore, ad.uow, ad.clock).Middleware
 	return ad
 }
 
