@@ -95,4 +95,6 @@ are the catalogue in `internal/adapters/inbound/http/errors.go`.
   to store wins; the loser rolls back and replays the winner's answer. When the
   first ends RETRYABLE nothing is stored and each copy is answered by its own
   execution.
-- Nothing purges `idempotency_keys`, so a key is remembered indefinitely.
+- A stored answer is kept for 24 hours only: an expired key is a new request
+  again, and its row is deleted by the hourly retention purge (ADR 0013
+  Amendment 2), so `idempotency_keys` does not grow with traffic.

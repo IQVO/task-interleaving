@@ -8,7 +8,8 @@ warehouse-harness-template `docs/idempotency-replay-classes.md`, rule
 [ADR 0010](0010-adopt-the-fleet-rest-api-guideline.md) item 2 ("a stored 2xx or 4xx") and the "2xx and 4xx only" of
 the `idempotency_keys` row of [ADR 0005](0005-persistence-and-evaluation-semantics.md); the rest of both stands.
 Amended 2026-11-21 (fleet audit 2026-11-21, defect 1): an in-flight duplicate re-reads the key before an unstored
-answer, and a stored answer replays for 24 h only (see "Amendment 1" below).
+answer, and a stored answer replays for 24 h only (see "Amendment 1" below). Amended 2026-11-22: an hourly retention
+purge deletes the expired key rows (see "Amendment 2" below).
 
 ## Context
 
@@ -89,6 +90,42 @@ and the harness template's `TestConcurrentDuplicateReplaysTheOriginalsStoredAnsw
 an older row and `Save` replaces it (`ON CONFLICT (key) DO UPDATE ... WHERE created_at < now - 24 h`), so past the
 window the same key is a new request, and another body under it is not `idempotency-key-reused`. The re-read honours
 the same window. Purging expired rows is still a follow-up (nothing deletes them).
+
+### Amendment 2 (2026-11-22): the retention purge
+
+**The gap.** Amendment 1 bounded the *answer* (a row older than the window never replays) but not the *table*:
+nothing deleted the expired rows, so `idempotency_keys` grew with traffic forever (runbook, "Nothing deletes rows";
+the follow-up named below).
+
+**The decision.** The `IdempotencyStore` port gains `PurgeExpired(ctx, notBefore, limit)`: it deletes up to `limit`
+answers created before `notBefore`, oldest first, and returns the count. `notBefore` is computed by the caller from
+the SAME `IdempotencyWindow` constant the replay read uses (`Lookup`'s `created_at >= notBefore` and the purge's
+`created_at < notBefore` are exact complements), so the read check, the purge and the documented 24 h window are one
+value. The Postgres statement picks each batch with `ORDER BY created_at LIMIT n FOR UPDATE SKIP LOCKED` and takes
+no advisory lock: a row a request's unit of work holds is skipped, never waited for, and the purge never waits on a
+request either. A row the purge deletes just before a request's `Save` only turns that upsert into an insert. The
+memory double has the same semantics, and the shared `repocontract.IdempotencyPurge` suite runs over both stores
+(`internal/testing/repocontract/idempotency_purge.go`).
+
+**The worker.** `cmd/api` runs an always-on retention worker (`cmd/api/retention.go`, started after the hint-expiry
+worker, before the relay): one pass at once on start, then one pass every hour; each pass batches 500 rows until a
+batch comes back short. The interval and the batch are fixed constants, not configuration, like the retention of the
+sibling services (order-sourcing #84, last-mile-delivery #86): the age is the replay window itself, the rest is
+housekeeping. A failed pass is logged and retried at the next tick — the purge is idempotent and a row that outlives
+its window is never replayed, so a failure costs only disk.
+
+**Proofs.** `cmd/api/idempotency_retention_integration_test.go` drives the real router over a real Postgres: the
+purge deletes exactly the expired rows and keeps the live ones; a replay of an expired key EXECUTES (Amendment 1's
+age guard, now also after the sweep); a purge racing a request parked inside its open transaction completes without
+waiting (SKIP LOCKED), deletes the other expired row and leaves the held request correct; three concurrent
+duplicates of expired keys racing the purge all answer the same 200 leaving one live row per key. The unit job runs
+the repocontract purge suite over the memory double and the retention loop's batching and stop behaviour
+(`cmd/api/retention_test.go`).
+
+**Not changed on purpose.** The merged migration's comment on `idempotency_keys` still reads "Only 2xx and 4xx
+answers are stored" — a merged migration is never edited (ADR 0013's catalogue, not that comment, is the authority
+on what is stored). `apis/openapi.yaml` already documents the 24 h replay window; the purge is housekeeping below
+the contract and changes no API behaviour.
 
 ### The classes (held equal to the catalogue by `TestTheADRDeclaresTheClassOfEveryProblemType`)
 
