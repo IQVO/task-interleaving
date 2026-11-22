@@ -51,8 +51,9 @@ func TestPostgresTheRetentionPurgeDeletesExpiredRowsAndKeepsLiveOnes(t *testing.
 	if status, live, hdr := svc.simulate(t, simulation, "k-live"); status != http.StatusOK || hdr.Get("Idempotency-Replayed") != "" {
 		t.Fatalf("k-live first = %d %s %v, want a fresh 200", status, live, hdr)
 	}
-	// k-old is now 24 h + 1 µs old (outside the window); k-live is 23 h old.
-	clock.Advance(24*time.Hour + time.Microsecond)
+	// now = T + 24 h + 1 µs: k-old (created at T) is outside the window,
+	// k-live (created at T+1 h) is one hour short of it.
+	clock.Advance(23*time.Hour + time.Microsecond)
 
 	if status, body, hdr := svc.simulate(t, simulation, "k-live"); status != http.StatusOK || hdr.Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("k-live before the purge = %d %s %v, want the stored answer replayed", status, body, hdr)
