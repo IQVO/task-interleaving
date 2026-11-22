@@ -110,7 +110,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) report(ctx context.Context, expired int, err error) {
 	if err != nil && !errors.Is(err, context.Canceled) {
-		w.logger.ErrorContext(ctx, "hint expiry sweep failed", "expired", expired, "error", err)
+		w.logger.ErrorContext(ctx, "hint expiry sweep failed", "expired", expired, "error", sanitizeErr(err))
 		return
 	}
 	if expired > 0 {
