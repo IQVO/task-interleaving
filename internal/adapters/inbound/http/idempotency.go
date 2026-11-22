@@ -310,7 +310,7 @@ func (m *Idempotency) finishRejected(w http.ResponseWriter, r *http.Request, key
 		err = m.Store.Save(r.Context(), rec, m.notBefore())
 	}
 	if err != nil {
-		m.Logger.WarnContext(r.Context(), "idempotency: answer not stored", "error", err)
+		m.Logger.WarnContext(r.Context(), "idempotency: answer not stored", "error", logReplacer.Replace(err.Error()))
 		flush(w, out)
 		return
 	}
@@ -337,7 +337,7 @@ func (m *Idempotency) finishRejected(w http.ResponseWriter, r *http.Request, key
 func (m *Idempotency) finishUnstored(w http.ResponseWriter, r *http.Request, key, fp string, out *capture) {
 	stored, found, err := m.Store.Lookup(r.Context(), key, m.notBefore())
 	if err != nil {
-		m.Logger.WarnContext(r.Context(), "idempotency: re-read before an unstored refusal failed", "error", err)
+		m.Logger.WarnContext(r.Context(), "idempotency: re-read before an unstored refusal failed", "error", logReplacer.Replace(err.Error()))
 	} else if found {
 		replay(w, r, stored, fp)
 		return
