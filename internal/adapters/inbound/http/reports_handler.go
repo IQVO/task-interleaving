@@ -137,6 +137,6 @@ func (s *ReportsServer) handleFreshness(w http.ResponseWriter, r *http.Request) 
 // writeReportStoreError is the 500 for a failed analytical query. The cause is
 // logged, never echoed: it can carry SQL and connection details.
 func writeReportStoreError(w http.ResponseWriter, r *http.Request, err error) {
-	slog.ErrorContext(r.Context(), "report query failed", "error", err, "path", logSafe(r.URL.Path))
+	slog.ErrorContext(r.Context(), "report query failed", "error", logReplacer.Replace(err.Error()), "path", logSafe(r.URL.Path))
 	writeProblem(w, r, reportStoreError, "the analytical database query failed")
 }
