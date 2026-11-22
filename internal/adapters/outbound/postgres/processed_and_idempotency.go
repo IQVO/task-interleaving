@@ -95,3 +95,32 @@ func nonNilBytes(b []byte) []byte {
 	}
 	return b
 }
+
+// purgeExpiredKeysSQL deletes one bounded batch of the rows the replay read
+// already ignores: created_at < notBefore is the exact complement of Lookup's
+// created_at >= notBefore, the same notBefore the caller computes from
+// IdempotencyWindow and its clock. The batch is picked oldest first with
+// FOR UPDATE SKIP LOCKED, so a row a request holds (its unit of work inserted
+// or is replacing the row and owns the row lock until commit) is skipped,
+// never waited for, and no advisory lock is taken: the purge never waits on a
+// request and a request never waits on the purge. The outer predicate
+// re-checks the rows actually locked.
+const purgeExpiredKeysSQL = `DELETE FROM idempotency_keys WHERE key IN (
+	SELECT key FROM idempotency_keys WHERE created_at < $1
+	ORDER BY created_at LIMIT $2 FOR UPDATE SKIP LOCKED
+) AND created_at < $1`
+
+// PurgeExpired implements ports.IdempotencyStore: up to limit rows created
+// before notBefore are deleted, oldest first, and the count is returned. A
+// row deleted here just before a request's Save turns that upsert into an
+// insert; expiry itself stays enforced at read (ADR 0013, Amendment 2).
+func (s *IdempotencyStore) PurgeExpired(ctx context.Context, notBefore time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	tag, err := queryFor(ctx, s.pool).Exec(ctx, purgeExpiredKeysSQL, notBefore.UTC(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("purge expired idempotency keys: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}

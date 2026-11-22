@@ -34,3 +34,7 @@ func TestProcessedEventsContract(t *testing.T) {
 func TestIdempotencyStoreContract(t *testing.T) {
 	repocontract.IdempotencyStore(t, func(*testing.T) ports.IdempotencyStore { return memory.NewIdempotencyStore() })
 }
+
+func TestIdempotencyPurgeContract(t *testing.T) {
+	repocontract.IdempotencyPurge(t, func(*testing.T) ports.IdempotencyStore { return memory.NewIdempotencyStore() })
+}

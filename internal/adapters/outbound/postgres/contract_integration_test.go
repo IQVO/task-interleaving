@@ -49,3 +49,9 @@ func TestIdempotencyStoreContract(t *testing.T) {
 		return postgres.NewIdempotencyStore(pgtest.NewPool(t))
 	})
 }
+
+func TestIdempotencyPurgeContract(t *testing.T) {
+	repocontract.IdempotencyPurge(t, func(t *testing.T) ports.IdempotencyStore {
+		return postgres.NewIdempotencyStore(pgtest.NewPool(t))
+	})
+}
