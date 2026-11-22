@@ -18,7 +18,7 @@ Kafka, architecture fitness tests, and spec linting.
 | Unit, application | 24 in `internal/application/{usecases,outbox}` (23 + 1) | `make test` |
 | Unit and httptest, adapters and `cmd/*` | `inbound/http` 72, `inbound/kafka` 57, `inbound/expiry` 11, `inbound/a2a` 17, `inbound/mcp` 21, `outbound/memory` 23, `outbound/events` 13, `outbound/outbox` 13, `outbound/kafka` 12, `kafka/cloudevents` 6, `outbound/system` 2, `outbound/analyticsstore` 1, `outbound/postgres` 1 (DSN selection), `analytics/report` 9, `telemetry` 1, `cmd/api` 36, `cmd/a2a` 12, `cmd/mcp` 7, `cmd/ti-projector` 6, `cmd/ti-reports` 3, `bootretry` 6 | `make test` |
 | Coverage gate | 90% over `./internal/domain/...,./internal/application/...`; measured 99.9% on this commit | `make coverage` |
-| BDD (godog / Gherkin) | 13 feature files, **182 scenarios** executed (124 `Scenario` / `Scenario Outline` definitions, 16 of them outlines whose Examples rows expand), 1818 steps; all pass | `make bdd` |
+| BDD (godog / Gherkin) | 14 feature files, **187 scenarios** executed (129 `Scenario` / `Scenario Outline` definitions, 16 of them outlines whose Examples rows expand), 1818 steps; all pass | `make bdd` |
 | Integration (testcontainers) | 73 top-level functions behind `//go:build integration` (`TestMain` included): `cmd/api` 13, `cmd/a2a` 2, `cmd/mcp` 2, `inbound/kafka` 7, `outbound/analyticsstore` 5, `outbound/outbox` 8, `outbound/postgres` 36 | `make integration` |
 | Architecture fitness | 42 top-level test functions in `internal/architecture` (none skips) | `make arch-test` |
 | Load (tagged, not in CI) | 3 tests behind `//go:build load`: the recommender over a 1 000-task and a 10 000-task pool at PICK volume (`recommend` 2) and the full completion path (`usecases` 1), ADR 0012. They assert generous wall-clock limits (50 ms and 500 ms per call, 5 s end to end), not benchmarks | `make load` |
@@ -129,7 +129,7 @@ root holds no `.go` file at all (`TestNoGoFilesAtRepoRoot` in
 `internal/architecture` enforces it). They wire the **real use cases over the
 in-memory adapters** with a fake clock, so the scenarios are fast and need no
 Docker. `go test ./features -run TestFeatures -v` ends with
-`182 scenarios (182 passed)` and `1818 steps (1818 passed)`.
+`187 scenarios (187 passed)` and `1904 steps (1904 passed)`.
 
 ## Integration (testcontainers)
 
