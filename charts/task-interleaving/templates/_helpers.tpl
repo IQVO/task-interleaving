@@ -162,6 +162,15 @@ Service pair, pinned by app.kubernetes.io/component (tests/test_service_selector
 {{- include "task-interleaving.fullname" . }}-a2a
 {{- end }}
 
+{{/* agents.colocate (warehouse-infra ADR 0012): "true" iff colocate, mcp and a2a are all on; else empty. */}}
+{{- define "task-interleaving.agentsColocated" -}}
+{{- if and (.Values.agents | default dict).colocate .Values.mcp.enabled .Values.a2a.enabled }}true{{ end -}}
+{{- end }}
+
+{{- define "task-interleaving.agentsFullname" -}}
+{{- printf "%s-agents" (include "task-interleaving.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{- define "task-interleaving.analyticsProjectorFullname" -}}
 {{- include "task-interleaving.fullname" . }}-analytics-projector
 {{- end }}
