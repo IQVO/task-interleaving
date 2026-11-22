@@ -47,9 +47,10 @@ Also: `make arch-test` (the fitness tests in `internal/architecture`),
 `.gremlins.yaml` sets `efficacy` and `mutant-coverage` thresholds that
 gremlins fails on if the MEASURED score is `<=` the threshold, so a threshold
 must sit strictly BELOW what the repo can meet. Read the comment in
-`.gremlins.yaml` for the current baseline: all four domain packages measured
-100% efficacy and 100% mutator coverage with 0 lived mutants, and the
-thresholds are 90. When you deliberately lower coverage of a package (rare,
+`.gremlins.yaml` for the current baseline: every domain package measures
+100% efficacy with 0 lived mutants; `policy` measures 93.55% mutator coverage (the `const MaxHintTTLSeconds` the cover profile cannot
+see, see `MUTATION.md`). The thresholds are 99 efficacy and 93 mutant coverage, written as plain numbers (a quoted value is read as 0
+and never gates). When you deliberately lower coverage of a package (rare,
 for example removing dead code), lower the threshold in the SAME PR with a
 dated comment explaining why — never silently.
 

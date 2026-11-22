@@ -116,3 +116,9 @@ cannot measure.
   tie-break in fulfillment-execution, which re-checks the claim.
 - Until producer change P2 merges, the pool is empty and no hint is issued:
   accepted, and the reason this ADR pins the contract now.
+
+## Addendum 2026-11-13: current state
+
+The two rows marked `pending producer change P2` and the closing bullet are out of date. fulfillment-execution's `origin/develop` publishes
+`TaskAvailable` and `TaskClaimed` on `warehouse.fulfillment.events` (its `apis/asyncapi.yaml`, lines 482 and 644; its ADR 0049, with REPLENISH
+added by ADR 0050 and PICK tasks whose plan carries the site and the pick face by ADR 0062). `TaskClaimed` carries `claimed_at` there.

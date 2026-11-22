@@ -132,3 +132,14 @@ flowchart LR
   visible: a site is also inert until its policy is declared.
 - Nothing changes on the floor until fulfillment-execution's consumer change P3
   exists; until then hints are published and observable only.
+
+## Addendum 2026-11-13: current state
+
+Both `PLANNED` fulfillment-execution edges above are built; read from fulfillment-execution's `origin/develop`. Producer change P2 landed:
+`apis/asyncapi.yaml` declares `TaskAvailable` (line 482) and `TaskClaimed` (line 644), from its ADR 0049, extended to REPLENISH by ADR 0050
+and to PICK tasks whose plan carries the site and the pick face by ADR 0062. Consumer change P3 landed:
+`internal/adapters/inbound/kafka/interleaving_hint_consumer.go` consumes `InterleavingHintIssued` into a one-active-hint-per-station copy
+(`internal/adapters/outbound/interleavinghintcopy/doc.go`) that `claimNext` reads as a tie-break inside one priority band (its ADR 0051),
+so the last two Consequences bullets no longer hold. The `PLANNED: later waves` row for the operators' side also moved: this context
+has an MCP server (ADR 0007), warehouse-ops-agent calls its read tools (`internal/adapters/outbound/mcpclient/task_interleaving.go`) and
+warehouse-console registers a `task_interleaving_mfe` remote (`src/remotes-manifest.json:24`).

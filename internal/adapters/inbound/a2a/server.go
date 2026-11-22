@@ -15,7 +15,7 @@
 // context's MCP surface already offers that write, and it offers none. Deps
 // holds read use cases and nothing that can write; this package imports no
 // ports, outbox, event sink or Kafka package (internal/architecture's
-// TestA2AServerIsReadOnly). Like the MCP adapter it depends inward on the
+// TestAgentSurfacesAreReadOnly). Like the MCP adapter it depends inward on the
 // application layer and the domain only, never on an outbound adapter, and
 // nothing else may depend on it. The composition root (cmd/a2a) wires concrete
 // repositories into the use cases. Domain structs never leak across the

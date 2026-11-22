@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (2026-10-18).
+Accepted (2026-10-18). Update 2026-11-21: `TestMCPServerIsReadOnly` (a local-name match on `usecases`) is replaced by
+the fleet's hardened read-only agent sensor, `TestAgentSurfacesAreReadOnly` (`internal/architecture/agent_readonly_*`),
+which resolves `usecases`, `ports` and `postgres` by import path and also refuses write methods, raw SQL and driver
+imports. The charter below is unchanged.
 
 ## Context
 

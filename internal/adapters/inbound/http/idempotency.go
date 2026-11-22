@@ -28,6 +28,12 @@ const IdempotencyReplayedHeader = "Idempotency-Replayed"
 // maxIdempotencyKeyLen is the OpenAPI maxLength of the key.
 const maxIdempotencyKeyLen = 128
 
+// IdempotencyWindow is how long a stored answer is replayed (the fleet rule,
+// harness docs/idempotency-replay-classes.md): an answer older than this is
+// not found by Lookup, the key is a new request again and its new answer
+// replaces the expired row.
+const IdempotencyWindow = 24 * time.Hour
+
 // Control flow of the fresh path; neither escapes the middleware.
 var (
 	errRollback = errors.New("response is not stored: roll the request back")
@@ -45,17 +51,28 @@ var (
 //   - A new key runs the handler INSIDE one unit of work. A 2xx answer is saved
 //     in that same transaction, so the effects, their outbox rows and the
 //     stored answer commit or roll back together.
-//   - A 4xx answer rolls the unit of work back (a rejected request leaves no
-//     effect, and a Postgres transaction that hit a constraint is aborted
-//     anyway) and is then stored on its own, so the same key and body replay
-//     the same rejection. A 5xx answer is rolled back and NEVER stored, so
-//     the same key can retry the real work.
+//   - A refusal is handled by the replay class its problem type declares
+//     (replay_class.go, ADR 0013); the middleware holds no list of slugs. FINAL
+//     rolls the unit of work back (a rejected request leaves no effect, and a
+//     Postgres transaction that hit a constraint is aborted anyway) and is then
+//     stored on its own, so the same key and body replay the same rejection.
+//     OUTCOME commits the handler's writes with the stored answer, exactly as a
+//     2xx does. RETRYABLE, and a refusal with no class, rolls back and stores
+//     NOTHING: the key is released and a retry executes again, and a different
+//     body under that key is a new request. A 5xx answer is rolled back and
+//     NEVER stored, so the same key can retry the real work.
 //   - Two concurrent requests with one new key both run, but the store keeps
 //     the first writer's answer (ports.IdempotencyStore.Save): after saving, a
 //     request re-reads the key in its own transaction, and the one that finds
 //     another answer rolls back its effects and replays the winner's. Under
 //     Postgres the second Save blocks on the key's unique index until the
 //     first transaction ends, so the re-read sees the committed winner.
+//   - A stored answer replays for IdempotencyWindow (24 h) after it was
+//     created, and not a microsecond longer.
+//   - An in-flight duplicate replays, it never answers its own unstored
+//     refusal: before a RETRYABLE, unclassified or 5xx answer goes out, the
+//     key is re-read and a stored answer found there is replayed instead
+//     (finishUnstored).
 type Idempotency struct {
 	Store  ports.IdempotencyStore
 	UoW    ports.UnitOfWork
@@ -69,6 +86,9 @@ func NewIdempotency(store ports.IdempotencyStore, uow ports.UnitOfWork, clock po
 	return &Idempotency{Store: store, UoW: uow, Clock: clock, Logger: slog.Default()}
 }
 
+// notBefore is the oldest creation instant a replayable answer may have.
+func (m *Idempotency) notBefore() time.Time { return m.Clock.Now().UTC().Add(-IdempotencyWindow) }
+
 // Middleware wraps next.
 func (m *Idempotency) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +101,7 @@ func (m *Idempotency) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		fp := fingerprint(r, body)
-		rec, found, err := m.Store.Lookup(r.Context(), key)
+		rec, found, err := m.Store.Lookup(r.Context(), key, m.notBefore())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -155,6 +175,24 @@ type capture struct {
 	header http.Header
 	code   int
 	body   bytes.Buffer
+	class  replayClass
+}
+
+// MarkReplay records the replay class of the problem the handler is about to
+// write (replayMarker): writeProblem calls it.
+func (c *capture) MarkReplay(class replayClass) { c.class = class }
+
+// keepsWrites reports whether the handler's writes commit with the stored
+// answer: a 2xx, or the OUTCOME refusal of a command that committed. A 5xx never.
+func (c *capture) keepsWrites() bool {
+	return c.code/100 == 2 || (c.code < http.StatusInternalServerError && c.class == replayOutcome)
+}
+
+// storesRefusal reports whether a refusal whose unit of work rolled back is
+// still stored on its own: only a FINAL one. A RETRYABLE, an unclassified and
+// a 5xx answer release the key.
+func (c *capture) storesRefusal() bool {
+	return c.code < http.StatusInternalServerError && c.class == replayFinal
 }
 
 func (c *capture) Header() http.Header { return c.header }
@@ -179,7 +217,7 @@ func (m *Idempotency) serveFresh(w http.ResponseWriter, r *http.Request, next ht
 	)
 	err := m.UoW.Do(r.Context(), func(ctx context.Context) error {
 		out = serveCaptured(next, r.WithContext(ctx))
-		if out.code >= http.StatusBadRequest {
+		if !out.keepsWrites() {
 			return errRollback
 		}
 		rec, err := m.record(key, fp, out)
@@ -237,10 +275,10 @@ func (m *Idempotency) record(key, fp string, out *capture) (repository.Idempoten
 // saveAndReread saves rec and returns the record the store holds for its key
 // afterwards: rec itself, or the answer of the request that won the race.
 func (m *Idempotency) saveAndReread(ctx context.Context, rec repository.IdempotencyRecord) (repository.IdempotencyRecord, error) {
-	if err := m.Store.Save(ctx, rec); err != nil {
+	if err := m.Store.Save(ctx, rec, m.notBefore()); err != nil {
 		return repository.IdempotencyRecord{}, err
 	}
-	stored, found, err := m.Store.Lookup(ctx, rec.Key)
+	stored, found, err := m.Store.Lookup(ctx, rec.Key, m.notBefore())
 	if err != nil {
 		return repository.IdempotencyRecord{}, err
 	}
@@ -255,27 +293,52 @@ func sameAnswer(a, b repository.IdempotencyRecord) bool {
 		bytes.Equal(a.Body, b.Body) && a.CreatedAt.Equal(b.CreatedAt)
 }
 
-// finishRejected answers a request whose unit of work was rolled back: a 5xx
-// goes out as it is and is never stored; a 4xx is stored on its own first so a
-// retry with the same key and body replays it. If another request stored an
-// answer for the key first (it won a race this one lost with a 4xx), that
+// finishRejected answers a request whose unit of work was rolled back: a FINAL
+// refusal is stored on its own first so a retry with the same key and body
+// replays it. Every other answer (a 5xx, a RETRYABLE or unclassified refusal)
+// is never stored: the key row was never written, so the key is released; it
+// re-reads the key first (finishUnstored). If another request stored an answer
+// for the key first (it won a race this one lost with a FINAL refusal), that
 // answer is replayed instead.
 func (m *Idempotency) finishRejected(w http.ResponseWriter, r *http.Request, key, fp string, out *capture) {
-	if out.code >= http.StatusInternalServerError {
-		flush(w, out)
+	if !out.storesRefusal() {
+		m.finishUnstored(w, r, key, fp, out)
 		return
 	}
 	rec, err := m.record(key, fp, out)
 	if err == nil {
-		err = m.Store.Save(r.Context(), rec)
+		err = m.Store.Save(r.Context(), rec, m.notBefore())
 	}
 	if err != nil {
 		m.Logger.WarnContext(r.Context(), "idempotency: answer not stored", "error", err)
 		flush(w, out)
 		return
 	}
-	stored, found, err := m.Store.Lookup(r.Context(), key)
+	stored, found, err := m.Store.Lookup(r.Context(), key, m.notBefore())
 	if err == nil && found && !sameAnswer(stored, rec) {
+		replay(w, r, stored, fp)
+		return
+	}
+	flush(w, out)
+}
+
+// finishUnstored answers an unstored refusal (RETRYABLE, unclassified or 5xx)
+// after re-reading the key (fleet audit 2026-11-21, defect 1; harness
+// docs/idempotency-replay-classes.md "In-flight duplicates"). The key Lookup
+// runs before the unit of work and nothing holds the key while a request
+// runs, so a same-key copy that arrived while the original was in flight
+// passed that Lookup and decided against whatever state it then read. When
+// the original's answer is stored by now (within IdempotencyWindow), the copy
+// answers that stored answer instead of its own refusal: N copies are one run
+// and N-1 replays (another body: idempotency-key-reused). Re-reading here is
+// the same as re-reading under a lock, because the refusal already rolled back
+// every write. A failed re-read is logged at WARN and the request's own
+// refusal goes out (the key stays released).
+func (m *Idempotency) finishUnstored(w http.ResponseWriter, r *http.Request, key, fp string, out *capture) {
+	stored, found, err := m.Store.Lookup(r.Context(), key, m.notBefore())
+	if err != nil {
+		m.Logger.WarnContext(r.Context(), "idempotency: re-read before an unstored refusal failed", "error", err)
+	} else if found {
 		replay(w, r, stored, fp)
 		return
 	}

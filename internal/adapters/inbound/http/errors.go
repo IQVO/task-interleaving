@@ -29,78 +29,110 @@ var (
 	errUnknownQueryParameter = errors.New("unknown query parameter")
 )
 
-// problem is the fixed (status, slug, title, detail) of one error category.
-// detail, when set, replaces the error's own message (domain errors carry a
-// package prefix and are never sent to a client as they are).
+// problem is the fixed (status, slug, title, detail, replay class) of one
+// error category. detail, when set, replaces the error's own message (domain
+// errors carry a package prefix and are never sent to a client as they are).
+// Build one with newProblem only (TestProblemsAreBuiltByTheConstructorOnly): a
+// problem cannot exist without a class, and every problem is in the registry
+// the tests read.
 type problem struct {
 	status int
 	slug   string
 	title  string
 	detail string
+	class  replayClass
 }
 
-var internalProblem = problem{status: http.StatusInternalServerError, slug: "internal-error", title: "Internal server error"}
+// registry holds every problem built by newProblem, in declaration order.
+var registry []problem
+
+// newProblem builds and registers a problem. A slug has ONE status and ONE
+// class whichever error reaches it: a second registration with another status
+// or class is a programming error that stops the process at start (and every
+// test of the package).
+func newProblem(status int, slug, title, detail string, class replayClass) problem {
+	p := problem{status: status, slug: slug, title: title, detail: detail, class: class}
+	for _, q := range registry {
+		if q.slug != slug {
+			continue
+		}
+		if q.status != status || q.class != class {
+			panic("problem " + slug + " is declared twice with another status or replay class")
+		}
+		return p
+	}
+	registry = append(registry, p)
+	return p
+}
+
+var internalProblem = newProblem(http.StatusInternalServerError, "internal-error", "Internal server error", "", replayRetryable)
 
 // Problems the idempotency middleware writes itself, before any use case runs.
+// It answers them without storing anything; FINAL records that each is a
+// function of the request (and of the stored fingerprint) alone.
 var (
-	idempotencyKeyRequired = problem{status: http.StatusBadRequest, slug: "idempotency-key-required", title: "Idempotency-Key header is required"}
-	idempotencyKeyInvalid  = problem{status: http.StatusBadRequest, slug: "idempotency-key-invalid", title: "Idempotency-Key header is invalid"}
-	idempotencyKeyReused   = problem{status: http.StatusConflict, slug: "idempotency-key-reused", title: "Idempotency-Key was already used with a different request"}
+	idempotencyKeyRequired = newProblem(http.StatusBadRequest, "idempotency-key-required", "Idempotency-Key header is required", "", replayFinal)
+	idempotencyKeyInvalid  = newProblem(http.StatusBadRequest, "idempotency-key-invalid", "Idempotency-Key header is invalid", "", replayFinal)
+	idempotencyKeyReused   = newProblem(http.StatusConflict, "idempotency-key-reused", "Idempotency-Key was already used with a different request", "", replayFinal)
 )
 
 var (
-	invalidSite = problem{http.StatusBadRequest, "invalid-site-id", "Site id is invalid",
-		"siteId must be 1..64 characters without whitespace, control characters or '/'"}
-	invalidStation = problem{http.StatusBadRequest, "invalid-station-id", "Station id is invalid",
-		"stationId must be 1..64 characters without whitespace, control characters or '/'"}
+	invalidSite = newProblem(http.StatusBadRequest, "invalid-site-id", "Site id is invalid",
+		"siteId must be 1..64 characters without whitespace, control characters or '/'", replayFinal)
+	invalidStation = newProblem(http.StatusBadRequest, "invalid-station-id", "Station id is invalid",
+		"stationId must be 1..64 characters without whitespace, control characters or '/'", replayFinal)
+	malformedRequest = newProblem(http.StatusBadRequest, "malformed-request", "Malformed request",
+		"request body is not valid JSON for this operation", replayFinal)
 )
 
 // policyDetail is the invalid-policy problem with the detail of one violated
-// setting.
+// setting. The request's own settings alone decide it: FINAL.
 func policyDetail(detail string) problem {
-	return problem{http.StatusBadRequest, "invalid-policy", "Policy is invalid", detail}
+	return newProblem(http.StatusBadRequest, "invalid-policy", "Policy is invalid", detail, replayFinal)
 }
 
 // problemCatalogue maps every typed error to its problem, in match order.
 // Slugs are the catalogue of .claude/rules/rest-api.md and apis/openapi.yaml.
+// The replay class of each is declared on its problem, with the reason in ADR
+// 0013 (a test holds the ADR table equal to this catalogue).
 var problemCatalogue = []struct {
 	err error
 	p   problem
 }{
-	{errMalformedRequest, problem{http.StatusBadRequest, "malformed-request", "Malformed request", "request body is not valid JSON for this operation"}},
-	{errInvalidLocation, problem{status: http.StatusBadRequest, slug: "malformed-request", title: "Malformed request"}},
+	{errMalformedRequest, malformedRequest},
+	{errInvalidLocation, newProblem(http.StatusBadRequest, "malformed-request", "Malformed request", "", replayFinal)},
 
 	{policy.ErrInvalidSiteID, invalidSite},
 	{stationtrip.ErrInvalidStationID, invalidStation},
-	{stationtrip.ErrInvalidHintID, problem{http.StatusBadRequest, "invalid-hint-id", "Hint id is invalid",
-		"hint id must start with hint- and have no whitespace, control characters or '/'"}},
+	{stationtrip.ErrInvalidHintID, newProblem(http.StatusBadRequest, "invalid-hint-id", "Hint id is invalid",
+		"hint id must start with hint- and have no whitespace, control characters or '/'", replayFinal)},
 	{policy.ErrInvalidMaxDetour, policyDetail("maxDetourM must be a finite number greater than 0")},
 	{policy.ErrInvalidCandidates, policyDetail("maxCandidates must be between 1 and 5")},
 	{policy.ErrInvalidHintTTL, policyDetail("hintTtlSeconds must be greater than 0")},
 	{errHintTTLTooLarge, policyDetail("hintTtlSeconds must be at most 2147483647")},
 	{policy.ErrInvalidWeight, policyDetail("verticalWeight must be a finite number of at least 0")},
-	{policy.ErrInvalidTaskTypes, problem{http.StatusBadRequest, "invalid-task-type", "Eligible task types are invalid",
-		"eligibleTaskTypes must be a non-empty subset of PICK, PACK, REBIN, SLAM, RELOCATE, REPLENISH"}},
-	{errUnknownQueryParameter, problem{status: http.StatusBadRequest, slug: "unknown-query-parameter", title: "Unknown query parameter"}},
-	{usecases.ErrInvalidCursor, problem{status: http.StatusBadRequest, slug: "invalid-cursor", title: "Cursor is invalid"}},
-	{usecases.ErrInvalidLimit, problem{status: http.StatusBadRequest, slug: "invalid-limit", title: "Limit is invalid"}},
-	{usecases.ErrInvalidState, problem{status: http.StatusBadRequest, slug: "invalid-state", title: "State is invalid"}},
+	{policy.ErrInvalidTaskTypes, newProblem(http.StatusBadRequest, "invalid-task-type", "Eligible task types are invalid",
+		"eligibleTaskTypes must be a non-empty subset of PICK, PACK, REBIN, SLAM, RELOCATE, REPLENISH", replayFinal)},
+	{errUnknownQueryParameter, newProblem(http.StatusBadRequest, "unknown-query-parameter", "Unknown query parameter", "", replayFinal)},
+	{usecases.ErrInvalidCursor, newProblem(http.StatusBadRequest, "invalid-cursor", "Cursor is invalid", "", replayFinal)},
+	{usecases.ErrInvalidLimit, newProblem(http.StatusBadRequest, "invalid-limit", "Limit is invalid", "", replayFinal)},
+	{usecases.ErrInvalidState, newProblem(http.StatusBadRequest, "invalid-state", "State is invalid", "", replayFinal)},
 
-	{repository.ErrPolicyNotFound, problem{http.StatusNotFound, "policy-not-found", "Interleaving policy not found",
-		"the site has not declared an interleaving policy"}},
-	{repository.ErrHintNotFound, problem{status: http.StatusNotFound, slug: "hint-not-found", title: "Hint not found"}},
-	{repository.ErrStationNotFound, problem{http.StatusNotFound, "station-not-found", "Station not found",
-		"no completion has been recorded for the station"}},
+	{repository.ErrPolicyNotFound, newProblem(http.StatusNotFound, "policy-not-found", "Interleaving policy not found",
+		"the site has not declared an interleaving policy", replayRetryable)},
+	{repository.ErrHintNotFound, newProblem(http.StatusNotFound, "hint-not-found", "Hint not found", "", replayRetryable)},
+	{repository.ErrStationNotFound, newProblem(http.StatusNotFound, "station-not-found", "Station not found",
+		"no completion has been recorded for the station", replayRetryable)},
 
-	{repository.ErrConcurrentModification, problem{status: http.StatusConflict, slug: "concurrent-modification",
-		title: "The resource was modified by another request; re-fetch the latest version and retry"}},
-	{usecases.ErrVersionMismatch, problem{status: http.StatusPreconditionFailed, slug: "version-mismatch", title: "The If-Match version is stale"}},
+	{repository.ErrConcurrentModification, newProblem(http.StatusConflict, "concurrent-modification",
+		"The resource was modified by another request; re-fetch the latest version and retry", "", replayRetryable)},
+	{usecases.ErrVersionMismatch, newProblem(http.StatusPreconditionFailed, "version-mismatch", "The If-Match version is stale", "", replayRetryable)},
 
-	{usecases.ErrPolicyNotDeclared, problem{http.StatusUnprocessableEntity, "policy-not-declared", "The site has no interleaving policy",
-		"declare a policy with PUT /sites/{siteId}/policy before simulating"}},
-	{recommend.ErrOriginUnknown, problem{status: http.StatusUnprocessableEntity, slug: "origin-unknown", title: "The origin location has no known geometry"}},
-	{usecases.ErrStationPositionUnknown, problem{http.StatusUnprocessableEntity, "station-position-unknown", "The station position is unknown",
-		"the station has no recorded position; send fromLocation"}},
+	{usecases.ErrPolicyNotDeclared, newProblem(http.StatusUnprocessableEntity, "policy-not-declared", "The site has no interleaving policy",
+		"declare a policy with PUT /sites/{siteId}/policy before simulating", replayRetryable)},
+	{recommend.ErrOriginUnknown, newProblem(http.StatusUnprocessableEntity, "origin-unknown", "The origin location has no known geometry", "", replayRetryable)},
+	{usecases.ErrStationPositionUnknown, newProblem(http.StatusUnprocessableEntity, "station-position-unknown", "The station position is unknown",
+		"the station has no recorded position; send fromLocation", replayRetryable)},
 }
 
 // problemFor returns the problem of the first catalogue entry err matches, or

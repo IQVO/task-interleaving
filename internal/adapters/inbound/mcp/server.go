@@ -10,7 +10,7 @@
 // tool name. This package depends inward on the application layer and the
 // domain only, never on an outbound adapter or the REST adapter, and nothing
 // else may depend on it (internal/architecture's TestMCPAdapterDependencyRule;
-// TestMCPServerIsReadOnly pins that no write use case is reachable). The
+// TestAgentSurfacesAreReadOnly pins that no write use case is reachable). The
 // composition root (cmd/mcp) wires concrete repositories into the use cases.
 // There is no auth of any kind (fleet-wide revert 2026-09-11;
 // TestNoAuthMiddlewareReintroduced).

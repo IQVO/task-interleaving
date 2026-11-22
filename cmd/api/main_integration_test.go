@@ -112,6 +112,17 @@ func bootPostgres(t *testing.T) pgService {
 // inject a fault) before the server is built over them.
 func bootPostgresWith(t *testing.T, wrap func(*adapters)) pgService {
 	t.Helper()
+	return bootPostgresOver(t, func(ad *adapters, _ string) {
+		if wrap != nil {
+			wrap(ad)
+		}
+	})
+}
+
+// bootPostgresOver is bootPostgresWith whose hook also gets the database URL
+// (to build an adapter over its own pool, e.g. a decorated idempotency store).
+func bootPostgresOver(t *testing.T, wrap func(ad *adapters, url string)) pgService {
+	t.Helper()
 	url := pgtest.EmptyURL(t)
 	ad, closeAdapters, err := buildAdapters(t.Context(), url, url, discardLogger())
 	if err != nil {
@@ -121,11 +132,28 @@ func bootPostgresWith(t *testing.T, wrap func(*adapters)) pgService {
 	pool := pgtest.Open(t, url)
 	seedWorld(t, ad)
 	if wrap != nil {
-		wrap(&ad)
+		wrap(&ad, url)
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(buildServer(ad, &inboundhttp.Readiness{}, nil)))
 	t.Cleanup(srv.Close)
 	return pgService{srv: srv, ad: ad, count: func(table string) int { return pgtest.Count(t, pool, table) }}
+}
+
+// awaitLockWaiters waits until n backends of the service's database wait on a
+// lock (pg_stat_activity), and fails naming what it saw instead.
+func (s pgService) awaitLockWaiters(t *testing.T, n int) {
+	t.Helper()
+	const waiting = "pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+	deadline := time.Now().Add(15 * time.Second)
+	seen := 0
+	for time.Now().Before(deadline) {
+		if seen = s.count(waiting); seen >= n {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("lock waiters = %d after 15s, want %d (active backends: %d)", seen, n,
+		s.count("pg_stat_activity WHERE datname = current_database() AND state = 'active'"))
 }
 
 func (s pgService) declare(t *testing.T) {
@@ -204,28 +232,6 @@ func TestPostgresPolicyPutIsVersionGuarded(t *testing.T) {
 	}
 	if n := svc.count("outbox_events"); n != 2 {
 		t.Fatalf("outbox rows = %d, want one per accepted declaration", n)
-	}
-}
-
-// A 4xx answer rolls its unit of work back: the rejected request leaves no
-// row behind, and the rejection itself replays.
-func TestPostgresRejectionLeavesNoEffectAndReplays(t *testing.T) {
-	svc := bootPostgres(t) // no policy declared yet
-	status, body, _ := svc.simulate(t, simulation, "k-no-policy")
-	if status != http.StatusUnprocessableEntity || !strings.Contains(body, "/policy-not-declared") {
-		t.Fatalf("simulate without a policy = %d %s", status, body)
-	}
-	for _, table := range []string{"interleaving_policies", "hints", "station_trips", "outbox_events"} {
-		if n := svc.count(table); n != 0 {
-			t.Fatalf("%s has %d rows after a rejection", table, n)
-		}
-	}
-	svc.declare(t) // the world changed, the key still means the rejection
-	if status2, body2, hdr2 := svc.simulate(t, simulation, "k-no-policy"); status2 != status || body2 != body || hdr2.Get("Idempotency-Replayed") != "true" {
-		t.Fatalf("rejection replay differs or is not marked Idempotency-Replayed: %d %s %v", status2, body2, hdr2)
-	}
-	if n := svc.count("idempotency_keys"); n != 1 {
-		t.Fatalf("idempotency rows = %d, want the stored rejection only", n)
 	}
 }
 

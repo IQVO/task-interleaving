@@ -4,13 +4,14 @@ package architecture
 // READ-ONLY third driving adapter, exactly like the MCP server it inherits its
 // charter from (docs/adr/0007): the write gate of the A2A rollout allows a
 // skill to change state only if the MCP surface already offers that write, and
-// it offers none. Pinned structurally, reusing the MCP sensor's detectors:
+// it offers none. Pinned structurally, with the MCP surface's sensor:
 //
 //   - the adapter depends only on application and domain, and nothing depends
 //     on it (TestA2AAdapterDependencyRule);
-//   - the adapter's Deps holds read use cases only, no source file of the
-//     adapter or cmd/a2a imports a write-capable seam or names a write use case
-//     (TestA2AServerIsReadOnly);
+//   - the adapter and cmd/a2a reach only read identifiers: the hardened agent
+//     read-only sensor (agent_readonly_fitness_test.go, its config in
+//     agent_readonly_config_test.go) covers the a2a surface with the mcp one
+//     (TestAgentSurfacesAreReadOnly);
 //   - this context has no OUTBOUND A2A client: it never delegates to a sibling
 //     (CLAUDE.md rule 6; TestNoOutboundA2AClient, proven by
 //     TestOutboundA2AClientSensorBites).
@@ -20,7 +21,6 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -63,52 +63,6 @@ func TestA2AAdapterDependencyRule(t *testing.T) {
 		})
 		assertArchGoPasses(t, result)
 	})
-}
-
-func a2aReadOnlyFiles(t *testing.T) (adapter, command []string) {
-	t.Helper()
-	adapter = goFilesUnder(t, "../adapters/inbound/a2a", false)
-	command = goFilesUnder(t, filepath.Join("..", "..", "cmd", "a2a"), false)
-	if len(adapter) == 0 || len(command) == 0 {
-		t.Fatalf("no non-test Go file under the A2A adapter (%d) or cmd/a2a (%d): the sensor would pass vacuously", len(adapter), len(command))
-	}
-	sort.Strings(adapter)
-	sort.Strings(command)
-	return adapter, command
-}
-
-// TestA2AServerIsReadOnly: the A2A adapter and cmd/a2a can reach no write
-// path.
-func TestA2AServerIsReadOnly(t *testing.T) {
-	adapter, command := a2aReadOnlyFiles(t)
-	all := append(append([]string{}, adapter...), command...)
-	for _, path := range all {
-		found, err := mcpImportViolations(path, nil)
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		for _, v := range found {
-			t.Errorf("READ-ONLY A2A VIOLATION: %s -- the A2A surface may read through the use cases only (docs/adr/0009)", v)
-		}
-	}
-	for _, path := range adapter {
-		found, err := depsFieldViolations(path, nil)
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		for _, v := range found {
-			t.Errorf("READ-ONLY A2A VIOLATION: %s -- the A2A adapter may hold read use cases only (docs/adr/0009)", v)
-		}
-	}
-	for _, path := range all {
-		found, err := wiredUseCaseViolations(path, nil)
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		for _, v := range found {
-			t.Errorf("READ-ONLY A2A VIOLATION: %s -- wire only the read use cases (docs/adr/0009)", v)
-		}
-	}
 }
 
 // a2aClientImportSuffix is the SDK package of an outbound A2A client.

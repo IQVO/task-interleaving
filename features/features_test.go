@@ -124,6 +124,7 @@ type world struct {
 	policy  repository.PolicyRecord
 	sim     usecases.Recommendation
 	expired int
+	rules   rulesState
 }
 
 func (w *world) start() {
@@ -133,6 +134,7 @@ func (w *world) start() {
 	w.err, w.errChecked, w.unchecked, w.outcome = nil, false, nil, ""
 	w.eventSeq, w.redeliver = 0, nil
 	w.policy, w.sim, w.expired = repository.PolicyRecord{}, usecases.Recommendation{}, 0
+	w.rules = rulesState{}
 }
 
 // run starts a command: a failure of the previous one that no step looked at
@@ -187,4 +189,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerPolicySteps(sc, w)
 	registerFlowSteps(sc, w)
 	registerAssertionSteps(sc, w)
+	registerRulesSteps(sc, w)
+	registerDocRulesSteps(sc, w)
 }

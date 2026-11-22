@@ -14,6 +14,9 @@ import (
 const (
 	idemHeader = "Idempotency-Key"
 	simulate   = `{"stationId":"STN-07","fromLocation":"A-01"}`
+	// blankStation is a refusal that is a function of the request alone
+	// (invalid-station-id, FINAL).
+	blankStation = `{"stationId":" ","fromLocation":"A-01"}`
 
 	// replayedHeader marks a replayed answer, and only a replay.
 	replayedHeader = "Idempotency-Replayed"
@@ -105,16 +108,41 @@ func TestTheSameKeyWithAnotherRequestIsRejected(t *testing.T) {
 	}
 }
 
-func TestA4xxAnswerIsStoredAndReplayed(t *testing.T) {
+// FINAL (ADR 0013): the answer is a function of the request alone; it is stored
+// and replayed, the world moving on does not change it.
+func TestAFinalRefusalIsStoredAndReplayed(t *testing.T) {
+	f := idempotentWorld(t)
+	first := f.call(t, http.MethodPost, recommendPath, blankStation, idemHeader, "k-final")
+	expectProblem(t, first, http.StatusBadRequest, "invalid-station-id")
+	again := f.call(t, http.MethodPost, recommendPath, blankStation, idemHeader, "k-final")
+	expectProblem(t, again, http.StatusBadRequest, "invalid-station-id")
+	expectReplayOf(t, first, again)
+	expectProblem(t, f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k-final"), http.StatusConflict, "idempotency-key-reused")
+}
+
+// RETRYABLE (ADR 0013): policy-not-declared depends on state that changes (the
+// site declares its policy later). Nothing is stored, the key is released, the
+// SAME request under the SAME key executes again and, once the state allows it,
+// succeeds and is stored; a different body under a released key is a new request.
+func TestARetryableRefusalIsNotStoredAndItsKeyRetries(t *testing.T) {
 	f := newIdempotentFixture(t)
 	f.seedWorld(t)
-	first := f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k-4xx")
+	first := f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k-retry")
 	expectProblem(t, first, http.StatusUnprocessableEntity, "policy-not-declared")
-	f.declare(t) // the world changed, but the key still means the rejection
-	again := f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k-4xx")
+	expectFirstExecution(t, first)
+	if saves := f.store.saves.Load(); saves != 0 {
+		t.Fatalf("a RETRYABLE refusal was stored (%d saves)", saves)
+	}
+	again := f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k-retry")
 	expectProblem(t, again, http.StatusUnprocessableEntity, "policy-not-declared")
-	expectReplayOf(t, first, again)
-	f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-new")
+	expectFirstExecution(t, again) // executed again, not replayed
+	other := f.call(t, http.MethodPost, recommendPath, `{"stationId":"STN-08","fromLocation":"A-01"}`, idemHeader, "k-retry")
+	expectProblem(t, other, http.StatusUnprocessableEntity, "policy-not-declared") // a new request, not idempotency-key-reused
+
+	f.declare(t) // the state changed: the same request passes now
+	retry := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-retry")
+	expectFirstExecution(t, retry)
+	expectReplayOf(t, retry, f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-retry"))
 }
 
 func TestA5xxAnswerIsNeverStored(t *testing.T) {
@@ -139,11 +167,10 @@ func TestIdempotencyStoreFailures(t *testing.T) {
 		f.store.saveFail.set(errDB)
 		expectProblem(t, f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k"), http.StatusInternalServerError, "internal-error")
 	})
-	t.Run("save of a 4xx fails but the client still gets the 4xx", func(t *testing.T) {
-		f := newIdempotentFixture(t)
-		f.seedWorld(t)
+	t.Run("save of a FINAL refusal fails but the client still gets it", func(t *testing.T) {
+		f := idempotentWorld(t)
 		f.store.saveFail.set(errDB)
-		expectProblem(t, f.call(t, http.MethodPost, recommendPath, simulate, idemHeader, "k"), http.StatusUnprocessableEntity, "policy-not-declared")
+		expectProblem(t, f.call(t, http.MethodPost, recommendPath, blankStation, idemHeader, "k"), http.StatusBadRequest, "invalid-station-id")
 	})
 }
 
@@ -164,7 +191,7 @@ func winnerAnswer(t *testing.T, ours repository.IdempotencyRecord) repository.Id
 func TestTheLoserOfARaceReplaysTheWinnersAnswer(t *testing.T) {
 	f := idempotentWorld(t)
 	f.store.beforeSave = func(rec repository.IdempotencyRecord) {
-		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec)))
+		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec), time.Time{}))
 	}
 	r := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-race")
 	if r.body["winner"] != true || r.header.Get(replayedHeader) != "true" {
@@ -172,13 +199,12 @@ func TestTheLoserOfARaceReplaysTheWinnersAnswer(t *testing.T) {
 	}
 }
 
-func TestTheLoserOfARaceWithA4xxReplaysTheWinnersAnswer(t *testing.T) {
-	f := newIdempotentFixture(t)
-	f.seedWorld(t)
+func TestTheLoserOfARaceWithAFinalRefusalReplaysTheWinnersAnswer(t *testing.T) {
+	f := idempotentWorld(t)
 	f.store.beforeSave = func(rec repository.IdempotencyRecord) {
-		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec)))
+		must(t, f.store.IdempotencyStore.Save(t.Context(), winnerAnswer(t, rec), time.Time{}))
 	}
-	r := f.mustCall(t, http.MethodPost, recommendPath, simulate, http.StatusOK, idemHeader, "k-race4")
+	r := f.mustCall(t, http.MethodPost, recommendPath, blankStation, http.StatusOK, idemHeader, "k-race4")
 	if r.body["winner"] != true {
 		t.Fatalf("the 4xx loser did not replay the winner: %s", r.raw)
 	}
@@ -207,7 +233,7 @@ func TestConcurrentRequestsWithOneKeyShareOneAnswer(t *testing.T) {
 			t.Fatalf("answer %d differs: %s vs %s", i, a, answers[0])
 		}
 	}
-	stored, found, err := f.store.IdempotencyStore.Lookup(t.Context(), "k-same")
+	stored, found, err := f.store.IdempotencyStore.Lookup(t.Context(), "k-same", time.Time{})
 	must(t, err)
 	if !found || stored.Status != http.StatusOK {
 		t.Fatalf("stored = %+v found=%v", stored, found)

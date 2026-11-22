@@ -144,7 +144,10 @@ dead-lettered for that reason.
 There is one runtime: real Postgres and real Kafka
 ([ADR 0006](/docs/adr/0006-postgres-and-kafka-are-the-only-runtime)). There is
 no in-memory mode, no consumer that is off by default and no optional relay.
-`Idempotency-Key` is required on `POST /recommendations` in every deployment,
+`Idempotency-Key` is required on `POST /recommendations` in every deployment
+(a success and a FINAL refusal are stored and replayed; a RETRYABLE refusal and
+a 5xx are not stored and the key stays free, so a stuck caller simply resends
+the same request with the same key, [ADR 0013](/docs/adr/0013-every-problem-type-has-a-replay-class)),
 the outbox and the relay are always on and `DATABASE_URL`, `KAFKA_BROKERS` and
 both consumer groups are mandatory (see
 [Configuration](/docs/operations/configuration)). The in-memory adapters exist
@@ -221,7 +224,7 @@ never dropped silently.
 
 | Topic | Types | Key | Consumers |
 | --- | --- | --- | --- |
-| `warehouse.task-interleaving.events` | `InterleavingHintIssued` | station id | none built (see [Integration](/docs/ecosystem/integration)) |
+| `warehouse.task-interleaving.events` | `InterleavingHintIssued` | station id | fulfillment-execution (consumer built, its ADR 0051; see [Integration](/docs/ecosystem/integration)) |
 | `warehouse.task-interleaving.analytics` | `InterleavingHintIssued`, `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` | station id (hint events), site id (policy event) | `ti-projector` only (ADR 0008) |
 
 The full type is `com.warehouse.wes.task-interleaving.<entity>.<EventName>`
@@ -292,7 +295,9 @@ sweep time.
 - **Nothing deletes rows.** No code issues a `DELETE`: `outbox_events` keeps
   its published rows, `idempotency_keys` and `processed_events` grow with
   traffic, and `hints` is the permanent hint history. `idempotency_keys` has an
-  index on `created_at` for a future cleanup job, but there is none. Plan table
+  index on `created_at` for a future cleanup job, but there is none. A stored
+  answer replays for 24 h only (ADR 0013 amendment): an older row is ignored and
+  replaced by the key's next answer, but it is not deleted. Plan table
   maintenance outside the service.
 
 ## Routine procedures

@@ -231,7 +231,7 @@ sequenceDiagram
     H->>I: Postgres mode only
     alt Idempotency-Key missing or not 1 to 128 printable ASCII characters
         I-->>O: 400 idempotency-key-required or idempotency-key-invalid
-    else key already stored
+    else key already stored (a success or a FINAL refusal)
         I-->>O: stored answer replayed with Idempotency-Replayed true, or 409 idempotency-key-reused for another request
     end
     I->>UC: Handle station, fromLocation, inside a unit of work
@@ -256,6 +256,7 @@ sequenceDiagram
 
 Source: `internal/application/usecases/recommend.go`,
 `internal/adapters/inbound/http/recommend_handler.go`, `idempotency.go`,
-`recommend.Recommend`, `apis/openapi.yaml` (`recommendTasks`). A 4xx answer is
-rolled back and stored on its own so the same key replays the same rejection; a 5xx
-is never stored.
+`recommend.Recommend`, `apis/openapi.yaml` (`recommendTasks`). A FINAL refusal
+is rolled back and stored on its own so the same key replays the same rejection; a
+RETRYABLE refusal (the three `422`s) and a 5xx are never stored: the key is released and
+a retry executes again (ADR 0013).

@@ -44,6 +44,9 @@ direct connection.
 | `outbox_events` | `id` | the transactional outbox, same column set as the fleet's |
 | `idempotency_keys` | `key` | answers of POSTs made with an `Idempotency-Key` (2xx and 4xx only) |
 
+> **2026-11-20 pointer.** "2xx and 4xx only" is narrowed by [ADR 0013](0013-every-problem-type-has-a-replay-class.md):
+> a 4xx is stored only when its problem type is FINAL (or OUTCOME); a RETRYABLE refusal is not stored.
+
 - **A trip is a row plus its current hint.** The `StationTrip` aggregate holds
   the most recent hint in any state; `Snapshot` and `Restore` carry it. The
   repository writes the `station_trips` row first, then reconciles the history:

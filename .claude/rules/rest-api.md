@@ -57,7 +57,17 @@ API assigns work to a worker.
   invalid `stationId` is `invalid-station-id`.
 - `Idempotency-Key` (UUID per logical submit) is required on every POST in every
   deployment (Postgres is the only runtime); a replay with the same key and body
-  returns the original response. The spec marks the header `required: true`.
+  returns the original response when it is final for the request. The spec marks
+  the header `required: true`.
+- Replay classes (ADR 0013): every problem type declares `FINAL`, `OUTCOME` or
+  `RETRYABLE` on its catalogue entry (`newProblem(status, slug, title, detail,
+  class)` in `errors.go`; a test fails on a problem without one). A FINAL refusal
+  (the `400`s of the request alone) is stored and replayed; a RETRYABLE one
+  (`404`s, `409 concurrent-modification`, `412`, the `422`s, 5xx) is not stored,
+  its key is released and the same request under the same key executes again.
+  No problem type is an OUTCOME (the keyed route writes nothing and a refusal
+  rolls the unit of work back). `writeProblem` marks the capture; the middleware
+  holds no slug list.
 - JSON is camelCase on REST (`maxDetourM`, `hintTtlSeconds`); the same fields are
   snake_case in CloudEvents `data`.
 - Auth: none. The fleet-wide REST+MCP auth was deliberately reverted on

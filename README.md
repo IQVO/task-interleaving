@@ -62,7 +62,7 @@ cmd/a2a/              read-only A2A server (composition root, router; ADR 0009)
 cmd/ti-projector/     analytics projector — the only analytical-DB writer (ADR 0008)
 cmd/ti-reports/       analytics reader (GET /reports/...)
 migrations/           embedded SQL migrations (0001_interleaving_schema)
-features/             godog scenarios (6 .feature files, 68 scenarios) and their runner and steps (package features_test); the repo root holds no .go file
+features/             godog scenarios (13 .feature files, 124 scenario definitions, 182 executed) and their runner and steps (package features_test); the repo root holds no .go file
 docs/                 Docusaurus site (docs/docs) and the ADRs (docs/adr)
 internal/domain/      policy, travel, recommend, stationtrip
 internal/application/ usecases, ports, repository, outbox
@@ -206,7 +206,7 @@ operations over nine paths:
 | `GET` | `/hints` | List hints |
 | `GET` | `/hints/{hintId}` | Get one hint |
 | `GET` | `/stations/{stationId}` | A station's trip state |
-| `POST` | `/recommendations` | Rank the site's open tasks for a station that just completed one; issues the hint. **Requires an `Idempotency-Key` header** (a retry with the same key and request replays the original response, marked `Idempotency-Replayed: true`, instead of double-issuing; the same key with a different request is `409 idempotency-key-reused`) |
+| `POST` | `/recommendations` | Rank the site's open tasks for a station that just completed one; issues the hint. **Requires an `Idempotency-Key` header** (a retry with the same key and request replays the original response, marked `Idempotency-Replayed: true`, instead of double-issuing, when it was a success or a refusal that is final for the request (`400`); a refusal that depends on changeable state (`422 policy-not-declared`, `origin-unknown`, `station-position-unknown`) or a 5xx is not stored and the retry executes again; a copy sent while the first is in flight replays the first's stored answer; answers replay for 24 h; the same key with a different request is `409 idempotency-key-reused`; ADR 0013) |
 | `GET` | `/healthz` | Liveness |
 | `GET` | `/readyz` | Readiness — ready only while Postgres answers **and** a Kafka broker answers a metadata request (topics are not checked) |
 | `GET` | `/reports/hint-adoption` | Analytics report — served by `cmd/ti-reports`, not `cmd/api` |
@@ -320,8 +320,9 @@ Git hooks are managed by [lefthook](https://github.com/evilmartians/lefthook)
 
 - **Unit**: `go test -race ./...`; domain + application coverage gate **≥ 90%**
   (`make coverage`, CI `test` job).
-- **BDD**: the godog suite — 6 `.feature` files, 68 scenarios over the real
-  HTTP API (`make bdd`, CI `bdd` job).
+- **BDD**: the godog suite — 13 `.feature` files, 124 scenario definitions
+  (182 scenarios executed once Outline rows are expanded) over the real use
+  cases on in-memory adapters, no HTTP router (`make bdd`, CI `bdd` job).
 - **Integration**: testcontainers Postgres/Kafka suites, including an
   end-to-end test that boots `run()` on real Postgres and Kafka
   (`make integration`, CI `integration` job).

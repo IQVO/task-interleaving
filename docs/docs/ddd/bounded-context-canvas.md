@@ -121,7 +121,7 @@ may use as a tie-break inside one priority band.
 
 | Message | Kind | Channel | Consumers |
 | --- | --- | --- | --- |
-| `InterleavingHintIssued` | event | `warehouse.task-interleaving.events` and `warehouse.task-interleaving.analytics` | none built: fulfillment-execution does not read it yet |
+| `InterleavingHintIssued` | event | `warehouse.task-interleaving.events` and `warehouse.task-interleaving.analytics` | fulfillment-execution (consumer built, its ADR 0051); on the analytics topic also `ti-projector` (ADR 0008) |
 | `InterleavingHintConsumed`, `InterleavingHintExpired`, `InterleavingPolicyDeclared` | events | `warehouse.task-interleaving.analytics` only | `ti-projector` (ADR 0008) |
 
 Source: `apis/asyncapi.yaml`, ADR 0004.

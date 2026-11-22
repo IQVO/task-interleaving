@@ -75,8 +75,8 @@ together with the claim of the CloudEvents id. Branches:
 - A duplicate CloudEvents id: outcome `duplicate`, nothing runs.
 - A site with no policy: inert, no hint.
 - The hint is advisory: fulfillment-execution may use it as a tie-break inside one
-  priority band. It does not consume it yet (no code reads
-  `warehouse.task-interleaving.events` there).
+  priority band. Its consumer exists (its ADR 0051; `internal/adapters/inbound/kafka/interleaving_hint_consumer.go`
+  in fulfillment-execution).
 
 ## Flow 3 — the hinted station claims a candidate
 
@@ -138,4 +138,4 @@ Source: `internal/application/usecases/recommend.go`, `apis/openapi.yaml`
 `422 policy-not-declared`, `422 origin-unknown`, `422 station-position-unknown`
 (no `fromLocation` and no recorded position), `400 idempotency-key-required`,
 `400 idempotency-key-invalid` and `409 idempotency-key-reused` in Postgres mode,
-where the Idempotency-Key is enforced; a replay carries `Idempotency-Replayed: true`.
+where the Idempotency-Key is enforced; a replay carries `Idempotency-Replayed: true`. The three `422` refusals are RETRYABLE (not stored, the key is released); the `400`s are FINAL (stored and replayed), ADR 0013.

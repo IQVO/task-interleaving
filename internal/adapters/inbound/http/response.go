@@ -58,8 +58,14 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	writeProblem(w, r, p, problemDetailFor(err, p))
 }
 
-// writeProblem writes p with an explicit detail.
+// writeProblem writes p with an explicit detail and marks the capturing writer
+// of the Idempotency-Key middleware (if any) with the replay class of p. Every
+// problem leaves through here, so a problem cannot be answered without its
+// class reaching the middleware.
 func writeProblem(w http.ResponseWriter, r *http.Request, p problem, detail string) {
+	if m, ok := w.(replayMarker); ok {
+		m.MarkReplay(p.class)
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(p.status)
 	_ = json.NewEncoder(w).Encode(problemDetail{

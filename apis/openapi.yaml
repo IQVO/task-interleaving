@@ -290,7 +290,15 @@ paths:
         The site must have a declared policy (422 `policy-not-declared`
         otherwise) and the origin must have known geometry (422
         `origin-unknown`). Requires an `Idempotency-Key`; replaying the same key
-        and request returns the original answer with `Idempotency-Replayed: true`.
+        and request within 24 hours returns the original answer with
+        `Idempotency-Replayed: true` when that answer is final for the request: a
+        200, or a refusal that is a function of the request alone (400
+        `malformed-request`, `invalid-station-id`). A refusal that depends on
+        state that can change (422 `policy-not-declared`, `origin-unknown`,
+        `station-position-unknown`) and every 5xx is NOT stored: the key is
+        released and the same request under the same key executes again. A copy
+        that arrives while the original is still in flight answers the
+        original's stored answer, never a refusal of its own.
       tags: [Recommendations]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -509,7 +517,9 @@ components:
       description: >-
         `true` when this response is the stored answer of an earlier request
         with the same `Idempotency-Key` and the same method, path and body (the
-        handler did not run again). Absent on the first execution.
+        handler did not run again): a success or a refusal that is final for the
+        request. Absent on the first execution, and on the retry of a released
+        key (a refusal that depends on changeable state is not stored).
       schema:
         type: string
         enum: ["true"]
@@ -603,8 +613,16 @@ components:
         required on every deployment and answered with 400
         `idempotency-key-required` when absent; a replay with the same key and
         the same request (method, path and body) returns the original response
-        with the header `Idempotency-Replayed: true`, while the same key with a
-        different request is 409 `idempotency-key-reused`.
+        with the header `Idempotency-Replayed: true` when that answer was a
+        success or a refusal that is final for the request, while the same key
+        with a different request is 409 `idempotency-key-reused`. A stored answer
+        is replayed for 24 hours; after that the key is a new request again. A
+        refusal that depends on state that can change (422 `policy-not-declared`,
+        `origin-unknown`, `station-position-unknown`) and every 5xx are not
+        stored: the key is released, the same request under the same key
+        executes again and a different body under it is a new request. Before
+        such an unstored answer goes out the key is read again, so a copy sent
+        while the first request was in flight replays its stored answer.
       schema:
         type: string
         minLength: 1

@@ -64,26 +64,27 @@ func keyed(key string) *http.Request {
 	return req
 }
 
-// A mapped 4xx over an aborted transaction is still recorded and returned
-// (never a 500), replays, and never re-runs the handler.
-func TestIdempotencyA409OverAnAbortedTransactionIsRecorded(t *testing.T) {
+// A FINAL refusal over an aborted transaction is still recorded and returned
+// (never a 500), replays, and never re-runs the handler. The refusal goes out
+// through the production error writer (the real router answers the empty body
+// malformed-request, FINAL): a hand-written 4xx carries no class and is released.
+func TestIdempotencyAFinalRefusalOverAnAbortedTransactionIsRecorded(t *testing.T) {
 	var calls atomic.Int64
+	router := inboundhttp.NewRouter(&inboundhttp.Server{})
 	mw, pool := poisonMiddleware(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		poisonTx(t, r)
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"status":409}`))
+		router.ServeHTTP(w, r)
 	}))
 
 	first := httptest.NewRecorder()
 	mw.ServeHTTP(first, keyed("k-poison"))
-	if first.Code != http.StatusConflict {
-		t.Fatalf("first = %d %s, want the truthful 409", first.Code, first.Body.String())
+	if first.Code != http.StatusBadRequest {
+		t.Fatalf("first = %d %s, want the truthful 400", first.Code, first.Body.String())
 	}
 	var status int
-	if err := pool.QueryRow(t.Context(), `SELECT status FROM idempotency_keys WHERE key = 'k-poison'`).Scan(&status); err != nil || status != http.StatusConflict {
-		t.Fatalf("409 outcome committed = %d, %v", status, err)
+	if err := pool.QueryRow(t.Context(), `SELECT status FROM idempotency_keys WHERE key = 'k-poison'`).Scan(&status); err != nil || status != http.StatusBadRequest {
+		t.Fatalf("400 refusal committed = %d, %v", status, err)
 	}
 	if n := poisonCount(t, pool, "dup"); n != 0 {
 		t.Fatalf("the handler's partial write survived: %d rows", n)
@@ -91,7 +92,7 @@ func TestIdempotencyA409OverAnAbortedTransactionIsRecorded(t *testing.T) {
 
 	replay := httptest.NewRecorder()
 	mw.ServeHTTP(replay, keyed("k-poison"))
-	if replay.Code != http.StatusConflict || replay.Header().Get(inboundhttp.IdempotencyReplayedHeader) != "true" {
+	if replay.Code != http.StatusBadRequest || replay.Header().Get(inboundhttp.IdempotencyReplayedHeader) != "true" {
 		t.Fatalf("replay = %d replayed=%q", replay.Code, replay.Header().Get(inboundhttp.IdempotencyReplayedHeader))
 	}
 	if replay.Body.String() != first.Body.String() || calls.Load() != 1 {
