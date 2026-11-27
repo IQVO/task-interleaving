@@ -250,11 +250,15 @@ mcp:
     type: ClusterIP
     port: 8090
     targetPort: 8090
-  # Kong exposure: /api/mcp/task-interleaving -> Service :8090, prefix
+  # Agent Router exposure: /api/mcp/task-interleaving -> Service :8090, prefix
   # rewritten to /mcp. Needs the Gateway parentRef from warehouse-infra.
   route:
     enabled: false
     path: "/api/mcp/task-interleaving"
+    # Route timeout (HTTPRoute rule timeouts.request). "0s" disables it: Envoy's 15s
+    # default would cut MCP Streamable HTTP responses that stream over SSE.
+    timeouts:
+      request: "0s"
     parentRefs:
       - name: ""
         namespace: ""
@@ -286,11 +290,15 @@ a2a:
     type: ClusterIP
     port: 8093
     targetPort: 8093
-  # Kong exposure: /api/a2a/task-interleaving -> Service :8093, prefix
+  # Agent Router exposure: /api/a2a/task-interleaving -> Service :8093, prefix
   # rewritten to /. Needs the Gateway parentRef from warehouse-infra.
   route:
     enabled: false
     path: "/api/a2a/task-interleaving"
+    # Route timeout (HTTPRoute rule timeouts.request). "0s" disables it: Envoy's 15s
+    # default would cut long A2A calls and streamed (SSE) responses.
+    timeouts:
+      request: "0s"
     parentRefs:
       - name: ""
         namespace: ""
